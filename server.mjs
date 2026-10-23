@@ -24,6 +24,37 @@ export function sanitizeRoute(r, account) {
     account: account || null,
   };
 }
+// Trace responses are reduced here; prompt, folder, raw seat IDs and errors never leave the proxy.
+export function sanitizeTraceRoute(r, accountLabel) {
+  const seats = [...(r.order || []), ...(r.left || [])];
+  const targets = (r.tries || []).map((t, index) => {
+    const seat = seats.find((s) => s.id === t.id);
+    const provider = safe(seat?.provider || r.provider);
+    const model = safe(t.model || seat?.model || r.model);
+    const account = accountLabel(seat);
+    return {
+      key: `${account.key}:${provider}/${model}`,
+      account: account.label,
+      provider,
+      model,
+      effort: safe(t.effort),
+      done: t.done === true,
+      status: Number(t.status) || 0,
+      failed: !!t.fail || Number(t.status) >= 400,
+      index,
+    };
+  });
+  return {
+    ...sanitizeRoute(r),
+    agent: safe(r.agent),
+    model: targets.length
+      ? `${targets.at(-1).provider}/${targets.at(-1).model}`
+      : safe(r.model),
+    effort: targets.at(-1)?.effort || safe(r.effort),
+    account: targets.at(-1)?.account || null,
+    targets,
+  };
+}
 export function createApi(fetcher = fetch) {
   const sessions = new Map(),
     reverse = new Map(),
@@ -63,7 +94,7 @@ export function createApi(fetcher = fetch) {
       const r = await fetcher("http://127.0.0.1:3425" + path, {
         signal: AbortSignal.any([
           controller.signal,
-          AbortSignal.timeout(25000),
+          AbortSignal.timeout(30000),
         ]),
         redirect: "error",
       });
@@ -113,6 +144,50 @@ export function createApi(fetcher = fetch) {
           sessions: [...result.values()],
           at: new Date().toISOString(),
           scope: "今日最近 100 条 Codex 请求",
+        });
+      } else if (u.pathname === "/api/trace") {
+        const token = u.searchParams.get("session");
+        const manual = u.searchParams.get("manual");
+        const session = manual || (token ? sessions.get(token) : null);
+        if ((token && !session) || (manual && manual.length > 128)) {
+          send(400, { error: "会话无效，请重新选择" });
+          return true;
+        }
+        const after = Math.max(0, Number(u.searchParams.get("after")) || 0);
+        // Unlike session/route, trace treats any wait value as a fixed 25-second long poll.
+        const j = await upstream(
+          `/v1/magpie/trace?after=${after}${u.searchParams.get("wait") === "1" ? "&wait=1" : ""}`,
+        );
+        if (
+          !Array.isArray(j.routes) ||
+          !Array.isArray(j.ids) ||
+          !Number.isFinite(j.seq)
+        )
+          throw Error("schema");
+        const full = u.searchParams.get("identity") === "full";
+        const labelAccount = (seat) => {
+          if (!seat) return { key: "unknown", label: "账号未公开" };
+          const key = alias(accounts, `${seat.provider}:${seat.id}`, "账号");
+          const label =
+            full && typeof seat.who === "string"
+              ? seat.who.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 160)
+              : key;
+          return { key, label: label || key };
+        };
+        const routes = j.routes
+          .filter(
+            (r) =>
+              ["codex", "claude", "cursor", "chatgpt"].includes(r.agent) &&
+              (!session || r.session === session) &&
+              (u.searchParams.get("background") === "1" || !r.kind),
+          )
+          .map((r) => sanitizeTraceRoute(r, labelAccount));
+        send(200, {
+          seq: j.seq,
+          pid: Number(j.pid) || 0,
+          ids: j.ids.filter(Number.isFinite),
+          routes,
+          at: new Date().toISOString(),
         });
       } else if (u.pathname === "/api/route") {
         const token = u.searchParams.get("session");

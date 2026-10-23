@@ -7,6 +7,8 @@ import claudeIcon from "./assets/claude.svg";
 import cursorIcon from "./assets/cursor.svg";
 import {
   labels,
+  traceToScreen,
+  type TraceRoute,
   toScreen,
   type Route,
   type ScreenState,
@@ -21,6 +23,11 @@ interface Session {
 const mode = ref("sim"),
   view = ref("route"),
   sim = ref<ScreenState>("pending"),
+  identity = ref(false),
+  allSessions = ref(false),
+  demoRequests = ref(2),
+  demoBranches = ref(2),
+  traces = ref<TraceRoute[]>([]),
   selected = ref(""),
   manual = ref(""),
   manualActive = ref(""),
@@ -36,6 +43,37 @@ const mode = ref("sim"),
 let controller: AbortController | undefined,
   generation = 0;
 const fake = computed<ScreenData>(() => ({
+  targets: ["pending", "success", "failure"].includes(sim.value)
+    ? Array.from({ length: demoBranches.value }, (_, i) => ({
+        key: `demo-${i}`,
+        account: `模拟账号 ${String(i + 1).padStart(2, "0")}`,
+        provider: "codex",
+        model: i % 2 ? "gpt-5.6-luna" : "gpt-6-astra",
+        effort: i % 2 ? "low" : "high",
+        done: sim.value !== "pending",
+        status:
+          sim.value === "failure" ? 500 : sim.value === "success" ? 200 : 0,
+        failed: sim.value === "failure",
+        index: i,
+        active:
+          sim.value === "pending"
+            ? Array.from(
+                { length: demoRequests.value },
+                (_, n) => n % demoBranches.value,
+              ).filter((n) => n === i).length
+            : 0,
+        requests: 1,
+      }))
+    : [],
+  flights:
+    sim.value === "pending"
+      ? Array.from({ length: demoRequests.value }, (_, i) => ({
+          key: `demo-request-${i}`,
+          target: `demo-${i % demoBranches.value}`,
+          agent: "codex",
+        }))
+      : [],
+  sources: ["codex"],
   state: sim.value,
   model: ["idle", "empty", "offline"].includes(sim.value)
     ? "—"
@@ -65,13 +103,13 @@ const data = computed(() =>
             state: "idle" as ScreenState,
             detail: "连接已暂停",
           }
-        : !selected.value && !manualActive.value
+        : !allSessions.value && !selected.value && !manualActive.value
           ? {
               ...toScreen(null, false),
               state: "idle" as ScreenState,
               detail: "请选择会话或等待新记录",
             }
-          : toScreen(route.value, background.value),
+          : traceToScreen(traces.value),
 );
 async function json(path: string, signal: AbortSignal) {
   const r = await fetch(path, { signal, cache: "no-store" });
@@ -83,6 +121,7 @@ async function connect() {
   controller?.abort();
   const own = ++generation;
   route.value = null;
+  traces.value = [];
   error.value = "";
   at.value = "";
   if (mode.value !== "live" || !running.value) {
@@ -92,6 +131,8 @@ async function connect() {
   const c = new AbortController();
   controller = c;
   connection.value = "连接中";
+  let tracePid = 0;
+  const knownRoutes = new Map<number, TraceRoute>();
   let seq = 0,
     lastDiscovery = 0;
   let firstRoute = true;
@@ -106,23 +147,42 @@ async function connect() {
         sessions.value = j.sessions;
         at.value = j.at;
         lastDiscovery = Date.now();
-        if (!selected.value && !manualActive.value && j.sessions.length) {
+        if (
+          !allSessions.value &&
+          !selected.value &&
+          !manualActive.value &&
+          j.sessions.length
+        ) {
           selected.value = j.sessions[0].token;
           return;
         }
       }
-      if (selected.value || manualActive.value) {
+      if (allSessions.value || selected.value || manualActive.value) {
         const q = new URLSearchParams({
           after: String(seq),
-          wait: firstRoute ? "0" : "20",
+          wait: firstRoute ? "0" : "1",
+          identity: identity.value ? "full" : "anonymous",
+          background: background.value ? "1" : "0",
         });
-        if (manualActive.value) q.set("manual", manualActive.value);
-        else q.set("session", selected.value);
-        const j = await json("/api/route?" + q, c.signal);
+        if (!allSessions.value) {
+          if (manualActive.value) q.set("manual", manualActive.value);
+          else q.set("session", selected.value);
+        }
+        const j = await json("/api/trace?" + q, c.signal);
         if (own !== generation) return;
+        if (j.seq < seq || (tracePid && tracePid !== j.pid))
+          knownRoutes.clear();
+        tracePid = j.pid;
         seq = j.seq;
         firstRoute = false;
-        route.value = j.route;
+        const ids = new Set<number>(j.ids);
+        for (const id of knownRoutes.keys())
+          if (!ids.has(id)) knownRoutes.delete(id);
+        for (const r of j.routes) knownRoutes.set(r.id, r);
+        traces.value = [...knownRoutes.values()]
+          .sort((a, b) => b.id - a.id)
+          .slice(0, 60);
+        route.value = traces.value[0] || null;
         at.value = j.at;
       } else {
         const j = await json("/api/health", c.signal);
@@ -135,6 +195,7 @@ async function connect() {
       if (c.signal.aborted || own !== generation) return;
       connection.value = "连接失败";
       route.value = null;
+      traces.value = [];
       error.value = e instanceof Error ? e.message : "连接失败";
     }
     await new Promise<void>((resolve) => {
@@ -148,7 +209,10 @@ async function connect() {
     });
   }
 }
-watch([mode, selected, manualActive, background, running], connect);
+watch(
+  [mode, selected, manualActive, background, running, identity, allSessions],
+  connect,
+);
 onUnmounted(() => {
   generation++;
   controller?.abort();
@@ -250,14 +314,49 @@ function reconnect() {
             >
               {{ labels[s] }}
             </button>
-          </div></template
-        >
+          </div>
+          <label class="field-label" for="demo-requests"
+            >模拟并发请求 <span>{{ demoRequests }}</span></label
+          >
+          <input
+            id="demo-requests"
+            type="range"
+            min="1"
+            max="4"
+            v-model.number="demoRequests"
+          />
+          <label class="field-label" for="demo-branches"
+            >模拟目的地 <span>{{ demoBranches }}</span></label
+          >
+          <input
+            id="demo-branches"
+            type="range"
+            min="1"
+            max="4"
+            v-model.number="demoBranches"
+          />
+        </template>
         <template v-else
           ><div class="connection" :class="{ good: connection === '已连接' }">
             <i />{{ connection }}<span>{{ running ? "只读" : "已暂停" }}</span>
           </div>
-          <label class="field-label" for="session">会话发现</label
-          ><select id="session" v-model="selected" @change="choose">
+          <label class="check"
+            ><input
+              type="checkbox"
+              v-model="identity"
+            />显示完整账号（仅本机内存）</label
+          ><label class="check"
+            ><input
+              type="checkbox"
+              v-model="allSessions"
+            />查看所有会话的活动请求</label
+          ><label class="field-label" for="session">会话发现</label
+          ><select
+            id="session"
+            v-model="selected"
+            @change="choose"
+            :disabled="allSessions"
+          >
             <option value="">选择会话</option>
             <option v-for="s in sessions" :key="s.token" :value="s.token">
               {{ s.label }} · {{ s.model }}
@@ -286,9 +385,26 @@ function reconnect() {
             数据读取：{{ at ? new Date(at).toLocaleTimeString() : "—" }}<br />
             请求时间：{{
               route?.time ? new Date(route.time).toLocaleString() : "—"
-            }}<br />{{ error || "状态按会话最新请求显示。" }}
+            }}<br />{{
+              error || "状态按真实 trace 汇总，可显示并发与已尝试路由。"
+            }}
           </p></template
         >
+        <div v-if="mode === 'live' && data.targets?.length" class="route-debug">
+          <label class="field-label"
+            >实际目的地 · {{ data.targets.length }}</label
+          >
+          <div v-for="t in data.targets" :key="t.key">
+            <b>{{ t.account }}</b
+            ><code>{{ t.provider }}/{{ t.model }}</code
+            ><small
+              >{{ t.active }} 个尝试进行中 · {{ t.effort || "默认强度" }}</small
+            >
+          </div>
+          <p class="hint">
+            屏幕最多显示 4 个目的地、8 组飞行动画；其余记录在此列出。
+          </p>
+        </div>
         <div class="divider" />
         <label class="field-label" for="scale"
           >预览缩放 <span>{{ scale }}%</span></label
@@ -309,7 +425,7 @@ function reconnect() {
           v-model.number="speed"
         />
         <div class="panel-note">
-          喜鹊往返为状态动画，不表示生成进度或实际包流向。<br />仅未完成状态循环飞行；结束状态收起动画。
+          每个进行中的尝试对应两段喜鹊动画；往返为状态表现，不表示生成进度或实际包流向。<br />仅未完成状态循环飞行；结束状态收起动画。
         </div>
         <div class="asset-strip">
           <img :src="chatgptIcon" alt="ChatGPT" title="ChatGPT" /><img

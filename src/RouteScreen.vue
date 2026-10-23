@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { labels, type ScreenData } from "./types";
-import FlyingMagpie from "./FlyingMagpie.vue";
+import RouteGraph from "./RouteGraph.vue";
 import magpie from "./assets/magpie.svg";
 import chatgpt from "./assets/chatgpt.svg";
 defineProps<{
@@ -13,7 +13,7 @@ defineProps<{
 <template>
   <div
     class="screen"
-    :class="data.state"
+    :class="[data.state, { multi: (data.targets?.length || 0) >= 3 }]"
     role="img"
     :aria-label="`${mode === 'live' ? '真实' : '模拟'}：${labels[data.state]}，${data.model}`"
   >
@@ -23,32 +23,7 @@ defineProps<{
     </div>
     <template v-if="view === 'route'">
       <div class="screen-heading">每一次请求，都有来路。</div>
-      <div class="route-graph">
-        <svg class="route-wires" viewBox="0 0 352 100" aria-hidden="true">
-          <path d="M80 50H136M216 50H272" />
-        </svg>
-        <div class="route-node source">
-          <img :src="chatgpt" alt="" /><b><i />Codex</b><small>客户端</small>
-        </div>
-        <div class="route-node hub">
-          <img :src="magpie" alt="" /><b>magpie</b><small>127.0.0.1</small>
-        </div>
-        <div class="route-node destination">
-          <span class="account-dot">●</span><b>{{ data.account }}</b
-          ><small>实际路由</small>
-        </div>
-        <div
-          v-if="
-            data.state === 'pending' ||
-            data.state === 'success' ||
-            data.state === 'failure'
-          "
-          :key="data.state"
-          class="bird-flight"
-        >
-          <FlyingMagpie />
-        </div>
-      </div>
+      <RouteGraph :data="data" />
       <div class="status-title" aria-live="polite">
         <span class="state-dot" />{{ labels[data.state] }}
       </div>

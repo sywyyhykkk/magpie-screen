@@ -125,3 +125,100 @@ test("disconnect aborts upstream long poll", async () => {
       ),
   );
 });
+
+test("trace uses real seats, preserves concurrent tries and hides identity by default", async () => {
+  const seat = {
+    id: "private-seat",
+    provider: "codex",
+    who: "demo@example.invalid",
+    model: "gpt-a",
+  };
+  const r = {
+    id: 8,
+    agent: "codex",
+    session: "secret-session",
+    model: "asked",
+    order: [seat],
+    tries: [
+      { id: seat.id, model: "gpt-a", done: false },
+      { id: seat.id, model: "gpt-b", done: false },
+    ],
+    done: false,
+    prompt: "DO NOT LEAK",
+    folder: "/private/path",
+    error: "private error",
+  };
+  await fixture(
+    async (b) => {
+      const a = await (await fetch(b + "/api/trace")).json();
+      assert.equal(a.routes.length, 1);
+      assert.equal(a.routes[0].targets.length, 2);
+      assert.equal(a.routes[0].targets[0].account, "账号 01");
+      assert.ok(!JSON.stringify(a).includes("example.invalid"));
+      assert.ok(!JSON.stringify(a).includes("private-seat"));
+      assert.ok(!JSON.stringify(a).includes("DO NOT LEAK"));
+      assert.ok(!JSON.stringify(a).includes("/private/path"));
+      assert.ok(!JSON.stringify(a).includes("secret-session"));
+      const full = await (await fetch(b + "/api/trace?identity=full")).json();
+      assert.equal(full.routes[0].targets[0].account, "demo@example.invalid");
+      assert.equal(full.routes[0].targets[1].model, "gpt-b");
+      assert.notEqual(
+        full.routes[0].targets[0].key,
+        full.routes[0].targets[1].key,
+      );
+      const list = await (await fetch(b + "/api/sessions")).json();
+      const scoped = await (
+        await fetch(b + "/api/trace?session=" + list.sessions[0].token)
+      ).json();
+      assert.equal(scoped.routes.length, 1);
+      const unknown = await (
+        await fetch(b + "/api/trace?manual=missing")
+      ).json();
+      assert.equal(unknown.routes.length, 0);
+      const side = await (await fetch(b + "/api/trace?background=1")).json();
+      assert.equal(side.routes.length, 2);
+    },
+    async (url) => ({
+      ok: true,
+      json: async () =>
+        url.includes("usage/requests")
+          ? { rows: [row] }
+          : {
+              seq: 12,
+              pid: 3,
+              ids: [8, 9],
+              routes: [r, { ...r, id: 9, kind: "composer_predictions" }],
+            },
+    }),
+  );
+});
+
+test("trace deltas, process restart metadata and null tries remain explicit", async () => {
+  let count = 0;
+  await fixture(
+    async (b) => {
+      const a = await (await fetch(b + "/api/trace")).json();
+      assert.equal(a.routes[0].targets.length, 0);
+      assert.equal(a.routes[0].done, false);
+      const d = await (await fetch(b + "/api/trace?after=3&wait=1")).json();
+      assert.equal(d.routes.length, 0);
+      assert.equal(d.seq, 3);
+    },
+    async (url) => {
+      assert.ok(!url.includes("/v1/responses"));
+      count++;
+      return {
+        ok: true,
+        json: async () => ({
+          seq: 3,
+          pid: 4,
+          ids: [3],
+          routes:
+            count === 1
+              ? [{ id: 3, agent: "codex", tries: [], done: false }]
+              : [],
+        }),
+      };
+    },
+  );
+});

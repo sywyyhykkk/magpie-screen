@@ -708,3 +708,231 @@ footer {
     gap: 12px;
   }
 }
+
+/* Trace layout: seats come only from actual tries; active seats get priority. */
+.trace-graph {
+  width: 400px;
+  display: block;
+  isolation: isolate;
+}
+.trace-graph .route-node {
+  position: absolute;
+  width: 80px;
+}
+.trace-graph .source {
+  left: 0;
+}
+.trace-graph .hub {
+  left: 110px;
+}
+.source-icons {
+  display: flex;
+  gap: 3px;
+}
+.source-icons:has(img:nth-child(2)) img {
+  width: 16px;
+  height: 16px;
+}
+.target-row {
+  position: absolute;
+  left: 218px;
+  width: 182px;
+  height: 46px;
+  border: 1px solid #dcdce6;
+  border-radius: 9px;
+  background: white;
+  z-index: 1;
+  padding: 6px 8px;
+  text-align: left;
+}
+.target-row.live {
+  border-color: #34343b;
+}
+.target-account {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.target-account img {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+.target-account b {
+  font-size: 9px;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.target-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #aaaab4;
+  flex: none;
+}
+.live .target-dot {
+  background: #6258ee;
+  box-shadow: 0 0 0 3px #eeedfd;
+}
+.target-row.failed .target-dot {
+  background: #d64545;
+}
+.target-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  margin-top: 5px;
+  color: #92929d;
+  font-size: 8px;
+}
+.target-meta code {
+  max-width: 114px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  background: #f5f5f8;
+  border-radius: 3px;
+  padding: 1px 3px;
+  font-size: 8px;
+  color: #686871;
+}
+.target-meta span {
+  white-space: nowrap;
+  font-size: 7px;
+}
+.empty-target {
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  color: #9999a2;
+  border-style: dashed;
+}
+.trace-bird {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  width: 29px;
+  height: 25px;
+  offset-rotate: auto;
+  animation: trace-commute calc(var(--speed, 2.4s) * 2) linear infinite;
+  pointer-events: none;
+}
+.trace-bird .flying-magpie {
+  height: 25px;
+  width: 29px;
+}
+.more-targets {
+  position: absolute;
+  bottom: -14px;
+  right: 0;
+  font-size: 8px;
+  color: #92929d;
+}
+.multi .screen-top {
+  top: 32px;
+}
+.multi .screen-heading {
+  margin-top: 64px;
+}
+.multi .trace-graph {
+  margin-top: 18px;
+}
+.multi .status-title {
+  margin-top: 24px;
+  font-size: 21px;
+}
+.multi .model {
+  margin-top: 10px;
+  font-size: 11px;
+}
+.multi .effort {
+  font-size: 7px;
+}
+.multi .screen-foot {
+  bottom: 37px;
+  font-size: 8px;
+}
+.multi .screen-tabs {
+  bottom: 18px;
+}
+.route-debug > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f4;
+  overflow-wrap: anywhere;
+}
+.route-debug b {
+  font-size: 10px;
+  font-weight: 500;
+}
+.route-debug code,
+.route-debug small {
+  font-size: 9px;
+  color: #85858d;
+}
+select:disabled {
+  opacity: 0.55;
+}
+@keyframes trace-commute {
+  0% {
+    offset-distance: 0%;
+    transform: scaleX(1);
+    opacity: 0;
+  }
+  5% {
+    opacity: 1;
+  }
+  45% {
+    offset-distance: 100%;
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  49% {
+    offset-distance: 100%;
+    transform: scaleX(1);
+    opacity: 0;
+  }
+  50% {
+    offset-distance: 100%;
+    transform: scaleX(-1);
+    opacity: 0;
+  }
+  55% {
+    opacity: 1;
+  }
+  95% {
+    offset-distance: 0%;
+    transform: scaleX(-1);
+    opacity: 1;
+  }
+  100% {
+    offset-distance: 0%;
+    transform: scaleX(-1);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trace-bird {
+    display: none;
+  }
+}
+.trace-graph .route-wires path {
+  animation: none !important;
+  stroke: #c7c4e6;
+}
+.pending .trace-graph .route-wires path.live {
+  animation: wire-flow 0.75s linear infinite !important;
+  stroke: #7469ff;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pending .trace-graph .route-wires path.live {
+    animation: none !important;
+  }
+}
