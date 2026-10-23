@@ -6,3 +6,5 @@ dist/
 artifacts/
 device-backups/
 .DS_Store
+
+firmware/.pio/

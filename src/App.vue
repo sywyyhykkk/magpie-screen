@@ -416,7 +416,7 @@ function reconnect() {
         <h1>magpie.screen<span class="terminal-cursor" aria-hidden="true">_</span></h1>
         <p>你的桌面，一块小小的屏幕。 / LOCAL SCREEN STUDIO</p>
       </div>
-      <span class="local-badge">LOCAL PREVIEW <i /> </span>
+      <a class="local-badge" href="/config">设备配置 ↗</a>
     </header>
     <section class="workspace">
       <div class="preview-area">
@@ -722,7 +722,7 @@ function reconnect() {
     </section>
     <footer>
       <span>MAGPIE SCREEN / 0.2 · 事件动画</span
-      ><span>Web 预览工作台 · ESP32-S3 方形屏 · 固件适配待后续完成</span>
+      ><span>Web 预览工作台 · ESP32-S3 方形屏 · 三页固件已接入</span>
     </footer>
   </main>
 </template>

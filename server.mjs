@@ -2,7 +2,8 @@ import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { resolve, extname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createDevice } from "./device.mjs";
+import { createHash, randomUUID } from "node:crypto";
 const root = fileURLToPath(new URL(".", import.meta.url));
 const safe = (v) =>
   typeof v === "string" && /^[\w./:+ -]{1,100}$/.test(v) ? v : "";
@@ -196,7 +197,7 @@ export function createApi(fetcher = fetch) {
       } else if (u.pathname === "/api/quotas") {
         const j = await upstream("/v1/magpie/quotas");
         const data = sanitizeQuotas(j, key => {
-          if (!quotaIds.has(key)) quotaIds.set(key, randomUUID());
+          if (!quotaIds.has(key)) quotaIds.set(key, createHash("sha256").update(key).digest("hex").slice(0, 24));
           return quotaIds.get(key);
         });
         send(200, { accounts: data, at: new Date().toISOString() });
@@ -326,6 +327,7 @@ export function createApi(fetcher = fetch) {
 export async function start() {
   const prod = process.argv.includes("--production");
   const api = createApi();
+  const device = await createDevice(root);
   const vite = prod
     ? null
     : await (
@@ -336,6 +338,7 @@ export async function start() {
         appType: "spa",
       });
   const server = http.createServer(async (req, res) => {
+    if (await device.handler(req, res)) return;
     if (await api(req, res)) return;
     if (vite) {
       vite.middlewares(req, res);
@@ -369,12 +372,14 @@ export async function start() {
     console.log("Magpie Screen: http://127.0.0.1:4173"),
   );
   server.on("error", (e) => {
+    device.close();
     console.error(e.code);
     process.exitCode = 1;
     vite?.close();
   });
   for (const signal of ["SIGINT", "SIGTERM"])
     process.on(signal, () => {
+      device.close();
       server.close();
       vite?.close();
     });
