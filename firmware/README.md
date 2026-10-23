@@ -1,4 +1,4 @@
-# Magpie Screen 独立固件 0.3.8
+# Magpie Screen 独立固件 0.3.9
 
 适用硬件：Waveshare ESP32-S3-Touch-AMOLED-2.16，CO5300 480×480 AMOLED、QMI8658、CST92xx、AXP2101、16 MB Flash、8 MB OPI PSRAM。固件直接通过 Wi-Fi 读取 Magpie；日常无需运行网页预览或 USB 桥接。
 

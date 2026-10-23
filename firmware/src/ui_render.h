@@ -60,27 +60,31 @@ static InkBounds inkBounds(const String &s,const UiFont &f) {
   }
   return b;
 }
-static void quotaCaption(Arduino_Canvas &c,int center,int centerY,const String &label,const String &window,uint16_t color) {
-  const auto &f=uiFont22;
+static void dottedCaption(Arduino_Canvas &c,int left,int centerY,const String &label,const String &window,const UiFont &f,uint16_t color,int gap,int suffixOffsetY=0) {
   auto a=inkBounds(label,f), b=inkBounds(window,f);
-  constexpr int gap=12, diameter=3;
-  int aw=a.right-a.left, bw=b.right-b.left;
+  constexpr int diameter=3;
+  int aw=a.right-a.left;
   bool hasWindow=!b.empty;
-  int left=center-(aw+(hasWindow?gap*2+diameter+bw:0))/2;
   uiText(c,left-a.left,centerY-(a.top+a.bottom)/2,label,f,color);
   if(!hasWindow) return;
   int dot=left+aw+gap;
   // Symmetric antialiased dot, independent of font punctuation bearings.
   for(int y=-1;y<=1;y++) for(int x=0;x<diameter;x++)
     uiPixel(c,dot+x,centerY+y,color,(y!=0&&x!=1)?96:255);
-  // Optical correction for Latin text beside the CJK label on the panel.
-  constexpr int windowOpticalOffsetY=2;
-  uiText(c,dot+diameter+gap-b.left,centerY-(b.top+b.bottom)/2+windowOpticalOffsetY,window,f,color);
+  uiText(c,dot+diameter+gap-b.left,centerY-(b.top+b.bottom)/2+suffixOffsetY,window,f,color);
 }
-static void icon(Arduino_Canvas &c,int x,int y,const UiIcon &im,bool white=false) {
+static void quotaCaption(Arduino_Canvas &c,int center,int centerY,const String &label,const String &window,uint16_t color) {
+  const auto &f=uiFont22;
+  auto a=inkBounds(label,f), b=inkBounds(window,f);
+  constexpr int gap=12, diameter=3;
+  int width=a.right-a.left+(b.empty?0:gap*2+diameter+b.right-b.left);
+  // Keep the first page's established spacing and Latin optical correction.
+  dottedCaption(c,center-width/2,centerY,label,window,f,color,gap,2);
+}
+static void icon(Arduino_Canvas &c,int x,int y,const UiIcon &im,bool white=false,bool mirror=false) {
   for(int j=0;j<im.size;j++) for(int i=0;i<im.size;i++) {
     const uint8_t *p=im.rgba+4*(j*im.size+i);
-    uiPixel(c,x+i,y+j,white?0xffff:((p[0]>>3)<<11)|((p[1]>>2)<<5)|(p[2]>>3),p[3]);
+    uiPixel(c,x+(mirror?im.size-1-i:i),y+j,white?0xffff:((p[0]>>3)<<11)|((p[1]>>2)<<5)|(p[2]>>3),p[3]);
   }
 }
 static const UiIcon &providerIcon(String name) {

@@ -19,7 +19,7 @@
 #include <XPowersLib.h>
 
 constexpr int W = 480, H = 24;
-constexpr char VERSION[] = "0.3.8";
+constexpr char VERSION[] = "0.3.9";
 Arduino_ESP32QSPI bus(12, 38, 4, 5, 6, 7, false);
 Arduino_CO5300 display(&bus, 39, 0, false, 480, 480, 0, 0, 0, 0);
 class StripCanvas : public Arduino_Canvas {
@@ -448,7 +448,7 @@ void text(Arduino_Canvas &c, int x, int y, const String &s, int size=2, uint16_t
 }
 String value(JsonVariant v) { return v.isNull()?"--":v.as<String>(); }
 int routeY(int i,int n) { return n<=1?240:n==2?176+i*128:n==3?132+i*108:100+i*92; }
-void bird(Arduino_Canvas &c,int x,int y,uint16_t) { icon(c,x-16,y-16,icon_magpie32); }
+void bird(Arduino_Canvas &c,int x,int y,bool facingLeft) { icon(c,x-16,y-16,icon_magpie32,false,facingLeft); }
 void drawUI(Arduino_Canvas &c,int) {
   constexpr uint16_t muted=0x9cd3, green=0xaeea;
   if(setupMode) {
@@ -508,8 +508,9 @@ void drawUI(Arduino_Canvas &c,int) {
         for(JsonObject a:targets) { if(f.target==(a["key"]|"")) break; index++; }
         y2=routeY(std::min(index,3),(int)targets.size());
       }
-      if(f.kind=="response"||f.kind=="result") t=1-t;
-      bird(c,x1+(x2-x1)*t,240+(y2-240)*t-18*sinf(t*liquid::kPi),green);
+      bool returning=f.kind=="response"||f.kind=="result";
+      if(returning) t=1-t;
+      bird(c,x1+(x2-x1)*t,240+(y2-240)*t-18*sinf(t*liquid::kPi),returning);
     }
   } else {
     auto u=data["usage"];
@@ -517,11 +518,14 @@ void drawUI(Arduino_Canvas &c,int) {
     uiText(c,278,106,"Token · 含缓存",uiFont18,muted);
     uiText(c,24,140,"输入 "+value(u["input"])+"  输出 "+value(u["output"])+"  缓存 "+value(u["cache"]),uiFont18,muted,432);
     const char *keys[]={"calls","cost","cacheRate","speed"};
-    const char *names[]={"请求","费用估算 · USD","缓存命中率","输出速度"};
+    const char *names[]={"请求","费用估算","缓存命中率","输出速度"};
     for(int i=0;i<4;i++) {
       int x=24+i%2*220,y=158+i/2*90;
       c.drawRoundRect(x,y,212,82,5,0x3186);
-      uiText(c,x+12,y+25,names[i],uiFont18,muted);
+      if(i==1) {
+        auto bounds=inkBounds(names[i],uiFont18);
+        dottedCaption(c,x+12+bounds.left,y+25+(bounds.top+bounds.bottom)/2,names[i],"USD",uiFont18,muted,8);
+      } else uiText(c,x+12,y+25,names[i],uiFont18,muted);
       uiText(c,x+12,y+53,value(u[keys[i]]),uiFont28);
       if(i==0) uiText(c,x+12,y+74,"成功 "+value(u["success"]),uiFont18,muted);
       if(i==1&&(u["unpriced"]|0)>0) uiText(c,x+12,y+74,value(u["unpriced"])+" 次未计价",uiFont18,muted,190);
