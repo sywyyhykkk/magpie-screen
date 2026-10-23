@@ -819,7 +819,7 @@ footer {
   width: 29px;
   height: 25px;
   offset-rotate: auto;
-  animation: trace-commute calc(var(--speed, 2.4s) * 2) linear infinite;
+  animation: trace-event 900ms ease-in-out 1 both;
   pointer-events: none;
 }
 .trace-bird .flying-magpie {
@@ -880,43 +880,32 @@ footer {
 select:disabled {
   opacity: 0.55;
 }
-@keyframes trace-commute {
+@keyframes trace-event {
   0% {
     offset-distance: 0%;
-    transform: scaleX(1);
     opacity: 0;
   }
-  5% {
+  10% {
     opacity: 1;
   }
-  45% {
-    offset-distance: 100%;
-    transform: scaleX(1);
-    opacity: 1;
-  }
-  49% {
-    offset-distance: 100%;
-    transform: scaleX(1);
-    opacity: 0;
-  }
-  50% {
-    offset-distance: 100%;
-    transform: scaleX(-1);
-    opacity: 0;
-  }
-  55% {
-    opacity: 1;
-  }
-  95% {
-    offset-distance: 0%;
-    transform: scaleX(-1);
+  90% {
     opacity: 1;
   }
   100% {
-    offset-distance: 0%;
-    transform: scaleX(-1);
+    offset-distance: 100%;
     opacity: 0;
   }
+}
+.trace-bird.returning .flying-magpie {
+  transform: scaleY(-1);
+}
+.trace-bird.failed .parcel {
+  fill: #d64545;
+}
+.demo-play {
+  width: 100%;
+  margin-top: 14px;
+  font-size: 11px;
 }
 @media (prefers-reduced-motion: reduce) {
   .trace-bird {
@@ -928,7 +917,7 @@ select:disabled {
   stroke: #c7c4e6;
 }
 .pending .trace-graph .route-wires path.live {
-  animation: wire-flow 0.75s linear infinite !important;
+  animation: none !important;
   stroke: #7469ff;
 }
 @media (prefers-reduced-motion: reduce) {

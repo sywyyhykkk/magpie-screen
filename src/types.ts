@@ -22,6 +22,7 @@ export interface Route {
 }
 export interface ScreenData {
   targets?: ScreenTarget[];
+  events?: RouteEvent[];
   flights?: ScreenFlight[];
   sources?: string[];
   state: ScreenState;
@@ -68,6 +69,7 @@ export function toScreen(r: Route | null, background: boolean): ScreenData {
 }
 
 export interface TraceTarget {
+  responseSeen?: boolean;
   key: string;
   account: string;
   provider: string;
@@ -130,4 +132,50 @@ export function traceToScreen(routes: TraceRoute[]): ScreenData {
       ),
     ],
   };
+}
+
+export interface RouteEvent {
+  key: string;
+  kind: "request" | "attempt" | "response" | "result";
+  target: string;
+  failed: boolean;
+}
+// Compare observations, never infer repeated packets from an unfinished flag.
+// The initial snapshot is a baseline: opening/reconnecting must not replay history.
+export function routeEvents(
+  previous: Map<number, TraceRoute>,
+  incoming: TraceRoute[],
+  baseline: boolean,
+): RouteEvent[] {
+  if (baseline) return [];
+  const events: RouteEvent[] = [];
+  for (const r of incoming) {
+    const old = previous.get(r.id);
+    const push = (
+      kind: RouteEvent["kind"],
+      suffix: string,
+      target: string,
+      failed = false,
+    ) => events.push({ key: `${r.id}:${suffix}`, kind, target, failed });
+    if (!old) push("request", "request", "");
+    for (const t of r.targets) {
+      const before = old?.targets.find(
+        (p) => p.index === t.index && p.key === t.key,
+      );
+      if (!before) push("attempt", `attempt:${t.index}`, t.key);
+      if (
+        (t.done && !before?.done) ||
+        (!t.done && t.responseSeen && !before?.responseSeen)
+      )
+        push(
+          "response",
+          `${t.done ? "attempt-end" : "first-response"}:${t.index}`,
+          t.key,
+          t.failed,
+        );
+    }
+    if (r.done && !old?.done)
+      push("result", "result", "", r.failed || r.status >= 400);
+  }
+  return events;
 }

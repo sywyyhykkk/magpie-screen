@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import type { ScreenData, ScreenTarget } from "./types";
+import { computed, ref, watch, onUnmounted } from "vue";
+import type { ScreenData, ScreenTarget, RouteEvent } from "./types";
 import FlyingMagpie from "./FlyingMagpie.vue";
 import magpie from "./assets/magpie.svg";
 import chatgpt from "./assets/chatgpt.svg";
 import claude from "./assets/claude.svg";
 import cursor from "./assets/cursor.svg";
-const props = defineProps<{ data: ScreenData }>();
+const props = defineProps<{ data: ScreenData; speed?: number }>();
 const targets = computed(() =>
   [...(props.data.targets || [])]
     .sort((a, b) => b.active - a.active)
@@ -32,23 +32,88 @@ const sources = computed(() =>
   props.data.sources?.length ? props.data.sources : ["codex"],
 );
 const iconFor = (p: string) => icons[p] || chatgpt;
-const flights = computed(() => {
-  const allowed = new Set(targets.value.map((t) => t.key));
-  return (props.data.flights || [])
-    .filter((f) => allowed.has(f.target))
-    .slice(0, 8);
-});
-const pathFor = (key: string) => {
+interface PlayingEvent {
+  event: RouteEvent;
+  path: string;
+  delay: number;
+  duration: number;
+  start: number;
+}
+const playing = ref<PlayingEvent[]>([]);
+const timers = new Map<string, ReturnType<typeof setTimeout>>();
+function clearFlights() {
+  for (const timer of timers.values()) clearTimeout(timer);
+  timers.clear();
+  playing.value = [];
+}
+// Only newly observed event batches trigger animation. Snapshot refreshes do not.
+watch(
+  () => props.data.events,
+  (batch) => {
+    if (!batch?.length) {
+      clearFlights();
+      return;
+    }
+    const now = Date.now();
+    const endByRequest = new Map<string, number>();
+    for (const p of playing.value)
+      endByRequest.set(
+        p.event.key.split(":")[0],
+        Math.max(
+          endByRequest.get(p.event.key.split(":")[0]) || now,
+          p.start + p.duration,
+        ),
+      );
+    for (const event of batch.slice(0, 32)) {
+      if (timers.has(event.key)) continue;
+      if (
+        (event.kind === "attempt" || event.kind === "response") &&
+        !targets.value.some((t) => t.key === event.target)
+      )
+        continue;
+      const request = event.key.split(":")[0];
+      const start = Math.max(now, endByRequest.get(request) || now);
+      const duration = Math.round((props.speed ?? 2.4) * 400);
+      endByRequest.set(request, start + duration);
+      let path =
+        event.kind === "request"
+          ? `M80 ${mid.value}H110`
+          : event.kind === "result"
+            ? `M110 ${mid.value}H80`
+            : pathFor(event.target, event.kind === "response");
+      playing.value.push({ event, path, delay: start - now, start, duration });
+      timers.set(
+        event.key,
+        setTimeout(
+          () => {
+            playing.value = playing.value.filter(
+              (p) => p.event.key !== event.key,
+            );
+            timers.delete(event.key);
+          },
+          start - now + duration + 50,
+        ),
+      );
+    }
+  },
+);
+onUnmounted(clearFlights);
+const pathFor = (key: string, reverse = false) => {
   const index = targets.value.findIndex((t) => t.key === key);
-  return `M190 ${mid.value} C204 ${mid.value} 204 ${rowY(index)} 218 ${rowY(index)}`;
+  return reverse
+    ? `M218 ${rowY(index)} C204 ${rowY(index)} 204 ${mid.value} 190 ${mid.value}`
+    : `M190 ${mid.value} C204 ${mid.value} 204 ${rowY(index)} 218 ${rowY(index)}`;
 };
-const birdStyle = (path: string, i: number) => ({
-  offsetPath: `path('${path}')`,
-  animationDelay: `${-i * 0.53}s`,
+const birdStyle = (p: PlayingEvent) => ({
+  offsetPath: `path('${p.path}')`,
+  animationDelay: `${p.delay}ms`,
+  animationDuration: `${p.duration}ms`,
 });
 const state = (t: ScreenTarget) =>
   t.active
-    ? "未完成"
+    ? t.responseSeen
+      ? "已收到响应"
+      : "等待响应"
     : t.failed
       ? "失败"
       : t.done && t.status >= 200 && t.status < 300
@@ -113,13 +178,18 @@ const state = (t: ScreenTarget) =>
     >
       等待路由数据
     </div>
-    <template v-for="(f, i) in flights" :key="f.key"
-      ><div class="trace-bird" :style="birdStyle(`M80 ${mid}H110`, i)">
-        <FlyingMagpie />
-      </div>
-      <div class="trace-bird" :style="birdStyle(pathFor(f.target), i + 1)">
-        <FlyingMagpie /></div
-    ></template>
+    <div
+      v-for="p in playing"
+      :key="p.event.key"
+      class="trace-bird"
+      :class="{
+        failed: p.event.failed,
+        returning: p.event.kind === 'response' || p.event.kind === 'result',
+      }"
+      :style="birdStyle(p)"
+    >
+      <FlyingMagpie />
+    </div>
     <small v-if="(data.targets?.length || 0) > 4" class="more-targets"
       >另 {{ (data.targets?.length || 0) - 4 }} 个目的地 · 控制台查看</small
     >

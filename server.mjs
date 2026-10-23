@@ -42,6 +42,10 @@ export function sanitizeTraceRoute(r, accountLabel) {
       status: Number(t.status) || 0,
       failed: !!t.fail || Number(t.status) >= 400,
       index,
+      responseSeen:
+        Number(t.ttft) > 0 ||
+        Number(t.firstText) > 0 ||
+        Number(t.firstReasoning) > 0,
     };
   });
   return {

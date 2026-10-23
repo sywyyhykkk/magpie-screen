@@ -8,6 +8,8 @@ import cursorIcon from "./assets/cursor.svg";
 import {
   labels,
   traceToScreen,
+  routeEvents,
+  type RouteEvent,
   type TraceRoute,
   toScreen,
   type Route,
@@ -28,6 +30,8 @@ const mode = ref("sim"),
   demoRequests = ref(2),
   demoBranches = ref(2),
   traces = ref<TraceRoute[]>([]),
+  events = ref<RouteEvent[]>([]),
+  demoRun = ref(0),
   selected = ref(""),
   manual = ref(""),
   manualActive = ref(""),
@@ -43,6 +47,39 @@ const mode = ref("sim"),
 let controller: AbortController | undefined,
   generation = 0;
 const fake = computed<ScreenData>(() => ({
+  events:
+    demoRun.value && ["pending", "success", "failure"].includes(sim.value)
+      ? Array.from({ length: demoRequests.value }, (_, i) => [
+          {
+            key: `demo-${demoRun.value}-${i}:request`,
+            kind: "request" as const,
+            target: "",
+            failed: false,
+          },
+          {
+            key: `demo-${demoRun.value}-${i}:attempt`,
+            kind: "attempt" as const,
+            target: `demo-${i % demoBranches.value}`,
+            failed: false,
+          },
+          ...(sim.value !== "pending"
+            ? [
+                {
+                  key: `demo-${demoRun.value}-${i}:response`,
+                  kind: "response" as const,
+                  target: `demo-${i % demoBranches.value}`,
+                  failed: sim.value === "failure",
+                },
+                {
+                  key: `demo-${demoRun.value}-${i}:result`,
+                  kind: "result" as const,
+                  target: "",
+                  failed: sim.value === "failure",
+                },
+              ]
+            : []),
+        ]).flat()
+      : [],
   targets: ["pending", "success", "failure"].includes(sim.value)
     ? Array.from({ length: demoBranches.value }, (_, i) => ({
         key: `demo-${i}`,
@@ -109,7 +146,7 @@ const data = computed(() =>
               state: "idle" as ScreenState,
               detail: "请选择会话或等待新记录",
             }
-          : traceToScreen(traces.value),
+          : { ...traceToScreen(traces.value), events: events.value },
 );
 async function json(path: string, signal: AbortSignal) {
   const r = await fetch(path, { signal, cache: "no-store" });
@@ -122,6 +159,7 @@ async function connect() {
   const own = ++generation;
   route.value = null;
   traces.value = [];
+  events.value = [];
   error.value = "";
   at.value = "";
   if (mode.value !== "live" || !running.value) {
@@ -170,8 +208,13 @@ async function connect() {
         }
         const j = await json("/api/trace?" + q, c.signal);
         if (own !== generation) return;
-        if (j.seq < seq || (tracePid && tracePid !== j.pid))
+        const reset = j.seq < seq || !!(tracePid && tracePid !== j.pid);
+        if (reset) {
           knownRoutes.clear();
+          events.value = [];
+        }
+        const changes = routeEvents(knownRoutes, j.routes, firstRoute || reset);
+        if (changes.length) events.value = changes;
         tracePid = j.pid;
         seq = j.seq;
         firstRoute = false;
@@ -196,6 +239,11 @@ async function connect() {
       connection.value = "连接失败";
       route.value = null;
       traces.value = [];
+      events.value = [];
+      knownRoutes.clear();
+      seq = 0;
+      tracePid = 0;
+      firstRoute = true;
       error.value = e instanceof Error ? e.message : "连接失败";
     }
     await new Promise<void>((resolve) => {
@@ -256,6 +304,7 @@ function reconnect() {
           >
             <RouteScreen
               :data="data"
+              :speed="speed"
               :mode="mode"
               :view="view"
               :connected="
@@ -315,6 +364,7 @@ function reconnect() {
               {{ labels[s] }}
             </button>
           </div>
+          <button class="demo-play" @click="demoRun++">播放一次模拟事件</button>
           <label class="field-label" for="demo-requests"
             >模拟并发请求 <span>{{ demoRequests }}</span></label
           >
@@ -415,7 +465,7 @@ function reconnect() {
           max="100"
           v-model.number="scale"
         /><label class="field-label" for="speed"
-          >动画周期 <span>{{ speed.toFixed(1) }}s</span></label
+          >单次飞行 <span>{{ (speed * 0.4).toFixed(1) }}s</span></label
         ><input
           id="speed"
           type="range"
@@ -425,7 +475,7 @@ function reconnect() {
           v-model.number="speed"
         />
         <div class="panel-note">
-          每个进行中的尝试对应两段喜鹊动画；往返为状态表现，不表示生成进度或实际包流向。<br />仅未完成状态循环飞行；结束状态收起动画。
+          仅在新请求、开始尝试、首个响应或结束事件出现时飞行一次。<br />等待期间静止；首次连接只同步状态，不重放历史。
         </div>
         <div class="asset-strip">
           <img :src="chatgptIcon" alt="ChatGPT" title="ChatGPT" /><img
@@ -439,7 +489,7 @@ function reconnect() {
       </aside>
     </section>
     <footer>
-      <span>MAGPIE SCREEN / 0.1</span
+      <span>MAGPIE SCREEN / 0.2 · 事件动画</span
       ><span>Web 预览工作台 · ESP32-S3 方形屏 · 固件适配待后续完成</span>
     </footer>
   </main>

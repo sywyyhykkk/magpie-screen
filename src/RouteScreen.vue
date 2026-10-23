@@ -5,6 +5,7 @@ import magpie from "./assets/magpie.svg";
 import chatgpt from "./assets/chatgpt.svg";
 defineProps<{
   data: ScreenData;
+  speed?: number;
   mode: string;
   view: string;
   connected: string;
@@ -23,7 +24,7 @@ defineProps<{
     </div>
     <template v-if="view === 'route'">
       <div class="screen-heading">每一次请求，都有来路。</div>
-      <RouteGraph :data="data" />
+      <RouteGraph :data="data" :speed="speed" />
       <div class="status-title" aria-live="polite">
         <span class="state-dot" />{{ labels[data.state] }}
       </div>
