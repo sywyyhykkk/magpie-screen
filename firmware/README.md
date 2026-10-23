@@ -1,4 +1,4 @@
-# Magpie Screen 独立固件 0.3.7
+# Magpie Screen 独立固件 0.3.8
 
 适用硬件：Waveshare ESP32-S3-Touch-AMOLED-2.16，CO5300 480×480 AMOLED、QMI8658、CST92xx、AXP2101、16 MB Flash、8 MB OPI PSRAM。固件直接通过 Wi-Fi 读取 Magpie；日常无需运行网页预览或 USB 桥接。
 
@@ -79,6 +79,8 @@ c++ -std=c++17 firmware/test/power_policy_test.cpp -o /tmp/magpie-power-test
 /tmp/magpie-power-test
 c++ -std=c++17 firmware/test/orientation_test.cpp -o /tmp/magpie-orientation-test
 /tmp/magpie-orientation-test
+c++ -std=c++17 firmware/test/route_flights_test.cpp -o /tmp/magpie-route-flights-test
+/tmp/magpie-route-flights-test
 ```
 
 Python 回归测试使用 C++17 编译器及 PlatformIO 已下载的 ArduinoJson，支持 `CXX` 和 `SDKROOT` 环境变量。覆盖额度字符串生命周期、64 位请求 ID、路由事件、真实账号匹配、闲置清空、旋转和电源策略。

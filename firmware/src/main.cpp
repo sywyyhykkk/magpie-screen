@@ -2,6 +2,7 @@
 
 #include "liquid.h"
 #include "orientation.h"
+#include "route_flights.h"
 #include "standalone_network.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -18,7 +19,7 @@
 #include <XPowersLib.h>
 
 constexpr int W = 480, H = 24;
-constexpr char VERSION[] = "0.3.7";
+constexpr char VERSION[] = "0.3.8";
 Arduino_ESP32QSPI bus(12, 38, 4, 5, 6, 7, false);
 Arduino_CO5300 display(&bus, 39, 0, false, 480, 480, 0, 0, 0, 0);
 class StripCanvas : public Arduino_Canvas {
@@ -108,7 +109,7 @@ uint16_t palette[1800];
 bool prevBoot = false, prevKey = false;
 uint32_t keyTime = 0, bootTime = 0;
 struct Flight {
-  String key, kind, target;
+  String key, kind, target, request;
   bool failed;
   uint32_t start;
 };
@@ -499,7 +500,9 @@ void drawUI(Arduino_Canvas &c,int) {
     }
     if(!i) { c.drawFastHLine(222,240,48,0x52aa); centered(c,360,248,"等待请求",uiFont22,muted); }
     for(auto &f:flights) {
-      float t=std::min(1.f,(millis()-f.start)/850.f); int x1=84,x2=146,y2=240;
+      const uint32_t now = millis();
+      if (!route_flights::active(now, f.start)) continue;
+      float t=route_flights::elapsed(now,f.start)/float(route_flights::duration); int x1=84,x2=146,y2=240;
       if(f.kind=="attempt"||f.kind=="response") {
         x1=222; x2=270; int index=0;
         for(JsonObject a:targets) { if(f.target==(a["key"]|"")) break; index++; }
@@ -758,7 +761,7 @@ void loop() {
   size_t flightCount = flights.size();
   flights.erase(
       std::remove_if(flights.begin(), flights.end(),
-                     [](const Flight &f) { return millis() - f.start > 850; }),
+                     [](const Flight &f) { return route_flights::finished(millis(), f.start); }),
       flights.end());
   if (flightCount != flights.size())
     dirty = true;
@@ -897,8 +900,13 @@ void networkIO() {
           for (JsonObject e : data["route"]["events"].as<JsonArray>()) {
             if (flights.size() >= 12)
               break;
-            flights.push_back({e["key"] | "", e["kind"] | "", e["target"] | "",
-                               e["failed"] | false, millis()});
+            String eventKey = e["key"] | "";
+            // Event keys are pid:requestId:suffix; include both identity parts.
+            int separator = eventKey.indexOf(':', eventKey.indexOf(':') + 1);
+            String request = eventKey.substring(0, separator);
+            uint32_t start = route_flights::nextStart(flights, request, millis());
+            flights.push_back({eventKey, e["kind"] | "", e["target"] | "",
+                               request, e["failed"] | false, start});
           }
         }
         if (i == 2)
