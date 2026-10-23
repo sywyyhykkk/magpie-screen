@@ -1,21 +1,49 @@
-MIT License
+Magpie Screen 个人非商业使用许可 1.0
 
 Copyright (c) 2026 Magpie Screen contributors
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. 适用范围
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+本许可适用于以本许可发布的 Magpie Screen 原创代码、固件和文档
+（下称“本软件”）。第三方代码、依赖、字体及图标等材料继续适用各自
+的许可证，详见 THIRD_PARTY_NOTICES.md 和 LICENSES/，不受本许可新增
+限制约束。本许可不授予任何第三方商标或品牌使用权。
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. 个人非商业使用免费
+
+个人以非商业目的学习、研究、修改和在自己的设备上使用本软件，无需
+支付许可费用。个人也可以为上述非商业目的复制、分享本软件及修改版，
+但必须保留版权声明、本许可及适用的第三方声明，并注明所作修改。
+对于本许可覆盖的原创部分，分享的修改版应继续遵守本许可。
+
+“个人非商业使用”指自然人以个人身份进行、不属于其雇主、客户或其他
+组织业务活动，且不以取得商业利益或报酬为目的的使用。
+
+3. 商业使用须事先取得书面授权
+
+以下行为属于商业使用，必须在开始使用前取得相关权利人的单独书面
+商业授权；公开提供源代码不代表已授予商业使用许可：
+
+- 将本软件用于公司、雇主、客户或其他组织的商业运营或内部业务；
+- 在收费服务、商业托管、付费开发、咨询或客户交付中使用本软件；
+- 销售本软件、修改版，或预装、捆绑本软件的硬件及其他商业产品；
+- 以本软件开展其他以商业利益或报酬为目的的活动。
+
+商业授权的范围、期限、费用及其他条件以双方书面约定为准。
+申请授权请通过项目仓库联系维护者：
+https://github.com/sywyyhykkk/magpie-screen/issues
+提交申请不等于取得授权。本许可未明确授予的权利均予保留。
+
+4. 历史版本
+
+本许可仅适用于以本许可发布的材料，不撤回或缩减此前已经依 MIT
+许可证授予的权利。旧版本中的 MIT 材料仍可依其原许可使用；原许可
+文本保留于 LICENSES/magpie-screen-prior-MIT.txt。第三方材料亦始终
+遵循其原有许可。不能仅凭旧版本的 MIT 许可主张本许可覆盖的新增
+原创材料已经获得商业授权。
+
+5. 免责
+
+本软件按“现状”提供，不作任何明示或默示保证，包括但不限于适销性、
+特定用途适用性或不侵权保证。在适用法律允许的最大范围内，作者或
+版权持有人不对因本软件或其使用产生的索赔、损害或其他责任负责。

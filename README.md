@@ -122,4 +122,6 @@ Web 画布用于界面设计。0.3 原生固件独立读取 Magpie HTTP 接口�
 - [Magpie](https://github.com/yetone/magpie)：接口、图标与喜鹊矢量素材，MIT。
 - [Magpie Usage Display](https://github.com/peterroe/magpie-usage-display)：显示设备与伴随程序架构参考，MIT。
 
-本项目使用 MIT 许可证。第三方版权说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，许可证原文位于 `LICENSES/`。产品名称及标识属于各自权利人，本项目为社区兼容工具。
+本项目原创部分采用 [Magpie Screen 个人非商业使用许可](LICENSE)：**个人非商业使用免费，商业使用必须事先取得书面授权**。个人学习、自用及非商业修改分享允许免费进行；公司内部业务、客户交付、收费服务及预装硬件销售等须另行授权。商业授权请通过 [GitHub Issues](https://github.com/sywyyhykkk/magpie-screen/issues) 联系维护者。
+
+这是附带使用限制的源码可见许可。此前已依 MIT 发布的材料仍遵循其原许可；第三方代码、依赖、字体与图标继续适用各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 `LICENSES/`。产品名称及标识属于各自权利人，本项目为社区兼容工具。
