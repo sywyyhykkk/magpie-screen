@@ -7,8 +7,18 @@ import chatgpt from "./assets/chatgpt.svg";
 import claude from "./assets/claude.svg";
 import cursor from "./assets/cursor.svg";
 const props = defineProps<{ data: ScreenData; speed?: number }>();
+const idleHidden = ref(false);
+let idleTimer: ReturnType<typeof setTimeout> | undefined;
+function activity() {
+  clearTimeout(idleTimer); idleHidden.value=false;
+  if (!(props.data.targets || []).some(t => t.active > 0))
+    idleTimer=setTimeout(() => { idleHidden.value=true; clearFlights(); },10000);
+}
+watch(() => JSON.stringify((props.data.targets || []).map(t => [t.key,t.done,t.active,t.requests,t.failed])), activity, { immediate:true });
+watch(() => props.data.events, batch => {if(batch?.length) activity();});
+onUnmounted(() => clearTimeout(idleTimer));
 const targets = computed(() =>
-  [...(props.data.targets || [])]
+  [...(idleHidden.value ? [] : props.data.targets || [])]
     .sort((a, b) => b.active - a.active)
     .slice(0, 4),
 );

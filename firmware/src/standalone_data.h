@@ -49,6 +49,7 @@ struct DataAdapter {
   bool baseline[3] = {false, false, false};
   String quotaSignature, usageSignature, resetSignature, selection;
   String notice;
+  uint32_t routeActivityAt = 0;
   uint32_t pid = 0, seq = 0;
   void reset() {
     for (auto &b : baseline)
@@ -293,6 +294,7 @@ struct DataAdapter {
         push(id, "result", "result", "", nr["failed"]);
       if (baseline[2] && !suppress && jsonText(old) != jsonText(nr))
         changed = true;
+      if(jsonText(old)!=jsonText(nr)) routeActivityAt=millis();
       routes[id].set(nr);
     }
     std::vector<JsonObject> ordered;
@@ -319,8 +321,19 @@ struct DataAdapter {
         keys.push_back(k);
         targets.add(t);
       }
+    clearIdleRoute(out,millis());
     routes.garbageCollect();
     baseline[2] = true;
     return changed;
   }
+  bool clearIdleRoute(JsonObject out,uint32_t now) {
+    if(uint32_t(now-routeActivityAt)<10000) return false;
+    for(JsonPair p:routes.as<JsonObject>())
+      if(p.value()["done"]!=true) return false;
+    auto r=out["route"].as<JsonObject>();
+    if(r.isNull() || r["targets"].size()==0) return false;
+    r["targets"].clear();r["sources"].clear();r["events"].clear();r["state"]="empty";
+    return true;
+  }
+
 };

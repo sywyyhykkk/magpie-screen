@@ -57,7 +57,7 @@ bool fetchMagpie(const PollJob &,const String &path,JsonDocument &body,JsonDocum
 }
 ''' + network[network.index('struct SessionPoller {'):network.index('inline void networkTask')] + r'''
 struct DeviceConfig {bool background=false,showIdentity=false;};
-struct Adapter {DynamicJsonDocument routes{98304};bool baseline[3]={};uint32_t pid=0,seq=0;
+struct Adapter {DynamicJsonDocument routes{98304};bool baseline[3]={};uint32_t pid=0,seq=0,routeActivityAt=0;
 ''' + data[data.index('  bool trace('):data.rindex('\n};')] + r'''
 };
 int main(){
@@ -84,6 +84,19 @@ int main(){
   job.showIdentity=false;cfg.showIdentity=false;poller=SessionPoller();
   assert(poller.read(job,result));adapter.trace(result.body.as<JsonObjectConst>(),cfg,out.to<JsonObject>());
   assert(out["route"]["targets"][0]["account"].isNull());
+  clockMs+=9999;
+  assert(!adapter.clearIdleRoute(out.as<JsonObject>(),clockMs));
+  clockMs++;
+  assert(adapter.clearIdleRoute(out.as<JsonObject>(),clockMs));
+  assert(out["route"]["targets"].size()==0);
+  // Identical polling must not resurrect expired completed routes.
+  assert(poller.read(job,result));adapter.trace(result.body.as<JsonObjectConst>(),cfg,out.to<JsonObject>());
+  assert(out["route"]["targets"].size()==0);
+  // An unfinished request remains visible even past the idle deadline.
+  result.body["routes"][0]["done"]=false;
+  adapter.trace(result.body.as<JsonObjectConst>(),cfg,out.to<JsonObject>());
+  clockMs+=10001;assert(!adapter.clearIdleRoute(out.as<JsonObject>(),clockMs));
+  assert(out["route"]["targets"].size()==1);
   // Cache ordering and eviction must retain the newest IDs, all above UINT32_MAX.
   DynamicJsonDocument snapshot(98304);snapshot["pid"]=2;snapshot["seq"]=1;
   auto ids=snapshot.createNestedArray("ids"),routes=snapshot.createNestedArray("routes");

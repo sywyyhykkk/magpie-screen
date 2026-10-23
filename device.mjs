@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, rename, access } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline';
@@ -39,8 +39,7 @@ export async function createDevice(root) {
   const pending = new Map(), timers = new Set();
   const later = (fn, ms) => { if (stopped) return; const t = setTimeout(() => { timers.delete(t); if (!stopped) fn(); }, ms); timers.add(t); };
   async function bridge() {
-    let python = process.env.MAGPIE_PYTHON;
-    if (!python) { try { await access('/tmp/magpie-screen-flash-tools/bin/python'); python = '/tmp/magpie-screen-flash-tools/bin/python'; } catch { python = 'python3'; } }
+    const python = process.env.MAGPIE_PYTHON || 'python3';
     child = spawn(python, [resolve(root, 'scripts/serial_bridge.py')], { stdio: ['pipe', 'pipe', 'pipe'] });
     child.stderr.on('data', () => { lastError = 'USB 桥接不可用，请安装 pyserial 或设置 MAGPIE_PYTHON'; });
     child.stdin.on('error', () => {});

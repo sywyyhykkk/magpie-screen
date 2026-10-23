@@ -6,7 +6,9 @@ import json, os, socket, threading, time, urllib.request, urllib.error
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
-host = os.environ.get('DEVICE_HOST', '192.168.124.15')
+host = os.environ.get('DEVICE_HOST')
+if not host:
+    raise SystemExit('Set DEVICE_HOST to the test board hostname or LAN IP')
 key = os.environ.get('DEVICE_KEY') or json.loads((ROOT/'.local/device-config.json').read_text())['token']
 sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);sock.connect((host,80));lan=sock.getsockname()[0];sock.close()
 fixture={'remaining':65,'quotaFail':False,'route':None,'seq':1,'calls':0}

@@ -416,7 +416,7 @@ function reconnect() {
         <h1>magpie.screen<span class="terminal-cursor" aria-hidden="true">_</span></h1>
         <p>你的桌面，一块小小的屏幕。 / LOCAL SCREEN STUDIO</p>
       </div>
-      <a class="local-badge" href="/api/device/open-config">设备配置 ↗</a>
+      <a class="local-badge" href="/api/device/open-config" target="_blank" rel="noopener noreferrer">设备配置 ↗</a>
     </header>
     <section class="workspace">
       <div class="preview-area">

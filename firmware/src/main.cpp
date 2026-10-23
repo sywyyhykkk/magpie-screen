@@ -18,7 +18,7 @@
 #include <XPowersLib.h>
 
 constexpr int W = 480, H = 24;
-constexpr char VERSION[] = "0.3.6";
+constexpr char VERSION[] = "0.3.7";
 Arduino_ESP32QSPI bus(12, 38, 4, 5, 6, 7, false);
 Arduino_CO5300 display(&bus, 39, 0, false, 480, 480, 0, 0, 0, 0);
 class StripCanvas : public Arduino_Canvas {
@@ -623,6 +623,7 @@ void setup() {
 }
 void loop() {
   io();
+  if(adapter.clearIdleRoute(data.as<JsonObject>(),millis())) {flights.clear();dirty=true;}
   if (otaActive) {
     delay(1);
     return;
