@@ -317,10 +317,6 @@ function reconnect() {
             />
           </div>
         </div>
-        <div class="below-preview">
-          <span class="cross">＋</span> 方形屏幕预览 · 实机参数待核对
-          <span class="cross">＋</span>
-        </div>
         <div class="view-switch">
           <button :class="{ active: view === 'route' }" @click="view = 'route'">
             01 路由</button
@@ -335,6 +331,13 @@ function reconnect() {
       <aside>
         <div class="panel-title">
           <span>控制台</span><small>SCREEN STUDIO</small>
+        </div>
+        <div class="screen-readout">
+          <span
+            >{{ mode === "sim" ? "模拟" : "真实" }} ·
+            {{ labels[data.state] }}</span
+          >
+          <p>{{ data.detail }}</p>
         </div>
         <label class="field-label">数据源</label>
         <div class="segmented">

@@ -12,10 +12,16 @@ const targets = computed(() =>
     .sort((a, b) => b.active - a.active)
     .slice(0, 4),
 );
-const height = computed(() => Math.max(100, targets.value.length * 54));
+const height = computed(() => 480);
 const mid = computed(() => height.value / 2);
 const rowY = (index: number) =>
-  targets.value.length === 1 ? mid.value : 27 + index * 54;
+  targets.value.length <= 1
+    ? 240
+    : targets.value.length === 2
+      ? 176 + index * 128
+      : targets.value.length === 3
+        ? 112 + index * 128
+        : 84 + index * 104;
 const sourceNames: Record<string, string> = {
   codex: "Codex",
   chatgpt: "ChatGPT",
@@ -77,9 +83,9 @@ watch(
       endByRequest.set(request, start + duration);
       let path =
         event.kind === "request"
-          ? `M80 ${mid.value}H110`
+          ? `M84 ${mid.value}H146`
           : event.kind === "result"
-            ? `M110 ${mid.value}H80`
+            ? `M146 ${mid.value}H84`
             : pathFor(event.target, event.kind === "response");
       playing.value.push({ event, path, delay: start - now, start, duration });
       timers.set(
@@ -101,8 +107,8 @@ onUnmounted(clearFlights);
 const pathFor = (key: string, reverse = false) => {
   const index = targets.value.findIndex((t) => t.key === key);
   return reverse
-    ? `M218 ${rowY(index)} C204 ${rowY(index)} 204 ${mid.value} 190 ${mid.value}`
-    : `M190 ${mid.value} C204 ${mid.value} 204 ${rowY(index)} 218 ${rowY(index)}`;
+    ? `M270 ${rowY(index)} C246 ${rowY(index)} 248 ${mid.value} 222 ${mid.value}`
+    : `M222 ${mid.value} C248 ${mid.value} 246 ${rowY(index)} 270 ${rowY(index)}`;
 };
 const birdStyle = (p: PlayingEvent) => ({
   offsetPath: `path('${p.path}')`,
@@ -122,9 +128,9 @@ const state = (t: ScreenTarget) =>
 </script>
 <template>
   <div class="route-graph trace-graph" :style="{ height: height + 'px' }">
-    <svg class="route-wires" :viewBox="`0 0 400 ${height}`" aria-hidden="true">
+    <svg class="route-wires" :viewBox="`0 0 480 ${height}`" aria-hidden="true">
       <path
-        :d="`M80 ${mid}H110`"
+        :d="`M84 ${mid}H146`"
         :class="{ live: (data.flights?.length || 0) > 0 }"
       />
       <path
@@ -133,9 +139,9 @@ const state = (t: ScreenTarget) =>
         :d="pathFor(t.key)"
         :class="{ live: t.active }"
       />
-      <path v-if="!targets.length" :d="`M190 ${mid}H218`" />
+      <path v-if="!targets.length" :d="`M222 ${mid}H270`" />
     </svg>
-    <div class="route-node source" :style="{ top: mid - 43 + 'px' }">
+    <div class="route-node source" :style="{ top: mid - 40 + 'px' }">
       <div class="source-icons">
         <img v-for="s in sources" :key="s" :src="iconFor(s)" alt="" />
       </div>
@@ -145,17 +151,17 @@ const state = (t: ScreenTarget) =>
             ? "多客户端"
             : sourceNames[sources[0]] || sources[0]
         }}</b
-      ><small>客户端</small>
+      >
     </div>
-    <div class="route-node hub" :style="{ top: mid - 43 + 'px' }">
-      <img :src="magpie" alt="" /><b>magpie</b><small>127.0.0.1</small>
+    <div class="route-node hub" :style="{ top: mid - 40 + 'px' }">
+      <img :src="magpie" alt="" /><b>magpie</b>
     </div>
     <div
       v-for="(t, i) in targets"
       :key="t.key"
       class="target-row"
       :class="{ live: t.active, failed: t.failed }"
-      :style="{ top: rowY(i) - 23 + 'px' }"
+      :style="{ top: rowY(i) - 32 + 'px' }"
     >
       <div class="target-account">
         <span class="target-dot" /><img :src="iconFor(t.provider)" alt="" /><b
@@ -174,9 +180,9 @@ const state = (t: ScreenTarget) =>
     <div
       v-if="!targets.length"
       class="target-row empty-target"
-      :style="{ top: mid - 23 + 'px' }"
+      :style="{ top: mid - 32 + 'px' }"
     >
-      等待路由数据
+      <span aria-label="等待路由数据">○</span>
     </div>
     <div
       v-for="p in playing"
@@ -190,8 +196,5 @@ const state = (t: ScreenTarget) =>
     >
       <FlyingMagpie />
     </div>
-    <small v-if="(data.targets?.length || 0) > 4" class="more-targets"
-      >另 {{ (data.targets?.length || 0) - 4 }} 个目的地 · 控制台查看</small
-    >
   </div>
 </template>
