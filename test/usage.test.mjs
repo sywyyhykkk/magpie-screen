@@ -84,3 +84,16 @@ test("overview matches cache, success and timing formulas without averaging per-
   });
   assert.equal(tie.speedIsFloor, false);
 });
+
+test("overview keeps three providers, then merges all but the top two without mutating input", async () => {
+  const { overviewProviders } = await import("../src/usage.ts");
+  const providers = [10, 40, 20, 30, 5].map((tokens, i) => ({ ...demoUsage.providers[0], id: `p${i}`, tokens }));
+  const rows = overviewProviders(providers);
+  assert.deepEqual(rows.map((p) => [p.label, p.tokens]), [["p1", 40], ["p3", 30], ["其他", 35]]);
+  assert.equal(rows[2].title, "其他 3 个供应商：p2、p0、p4");
+  assert.deepEqual(providers.map((p) => p.tokens), [10, 40, 20, 30, 5]);
+  assert.equal(overviewProviders(providers.slice(0, 3)).length, 3);
+  assert.ok(overviewProviders(providers.slice(0, 3)).every((p) => p.label !== "其他"));
+  assert.deepEqual(overviewProviders([]), []);
+  assert.equal(overviewProviders([...providers, { ...providers[0], id: "unknown", tokens: null }])[2].tokens, null);
+});

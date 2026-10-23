@@ -28,6 +28,7 @@ export interface UsageData extends UsageMetrics {
 }
 export function compact(value: number | null | undefined): string {
   if (value == null) return "—";
+  if (value >= 1e12) return value.toExponential(1);
   if (value >= 1e9) return (value / 1e9).toFixed(1) + "B";
   if (value >= 1e6) return (value / 1e6).toFixed(1) + "M";
   if (value >= 1e3) return (value / 1e3).toFixed(1) + "K";
@@ -45,6 +46,23 @@ export const providerName = (id: string) =>
       "session-unknown": "未归属 / 本地会话",
     }) as Record<string, string>
   )[id] || id;
+// Keep the small display to three rows without dropping the remaining usage.
+export function overviewProviders(providers: ProviderUsage[]) {
+  const sorted = [...providers].sort((a, b) => (b.tokens ?? 0) - (a.tokens ?? 0));
+  const rows = sorted.map((p) => ({
+    key: `provider:${p.id}`, label: providerName(p.id), tokens: p.tokens,
+    title: providerName(p.id),
+  }));
+  if (rows.length <= 3) return rows;
+  const rest = sorted.slice(2);
+  return [...rows.slice(0, 2), {
+    key: 'other', label: '其他',
+    tokens: rest.every((p) => p.tokens != null)
+      ? rest.reduce((total, p) => total + p.tokens!, 0) : null,
+    title: `其他 ${rest.length} 个供应商：${rest.map((p) => providerName(p.id)).join('、')}`,
+  }];
+}
+
 export const demoUsage: UsageData = {
   period: "today",
   calls: 1280,
