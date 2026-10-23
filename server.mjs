@@ -59,6 +59,61 @@ export function sanitizeTraceRoute(r, accountLabel) {
     targets,
   };
 }
+const numeric = (value) =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
+export function sanitizeUsage(j) {
+  if (!j || numeric(j.calls) === null || !Array.isArray(j.models))
+    throw Error("usage schema");
+  const metrics = (row) => {
+    const input = numeric(row.input),
+      output = numeric(row.output);
+    return {
+      calls: numeric(row.calls),
+      errors: numeric(row.errors),
+      input,
+      output,
+      tokens: input === null || output === null ? null : input + output,
+      cacheRead: numeric(row.cache_read),
+      cost: numeric(row.cost),
+      unpriced: numeric(row.unpriced),
+    };
+  };
+  const grouped = new Map();
+  for (const model of j.models) {
+    const id = safe(model.provider) || "session-unknown";
+    const next = metrics(model);
+    if (!grouped.has(id)) grouped.set(id, { id, ...next });
+    else {
+      const group = grouped.get(id);
+      for (const key of Object.keys(next))
+        group[key] =
+          group[key] === null || next[key] === null
+            ? null
+            : group[key] + next[key];
+    }
+  }
+  const providers = [...grouped.values()].sort(
+    (a, b) => (b.tokens ?? 0) - (a.tokens ?? 0),
+  );
+  const optional = (key) => (j[key] === undefined ? 0 : numeric(j[key]));
+  return {
+    period: "today",
+    ...metrics(j),
+    providers,
+    cacheWrite: numeric(j.cache_write),
+    retried: optional("retried"),
+    timed: optional("timed"),
+    ttftMs: optional("ttft_ms"),
+    decodeMs: optional("decode_ms"),
+    decodeOut: optional("decode_out"),
+    decodeN: optional("decode_n"),
+    floorMs: optional("floor_ms"),
+    floorOut: optional("floor_out"),
+    floorN: optional("floor_n"),
+  };
+}
 export function createApi(fetcher = fetch) {
   const sessions = new Map(),
     reverse = new Map(),
@@ -109,6 +164,9 @@ export function createApi(fetcher = fetch) {
       if (u.pathname === "/api/health") {
         await upstream("/api/hello");
         send(200, { connected: true, at: new Date().toISOString() });
+      } else if (u.pathname === "/api/usage") {
+        const j = await upstream("/v1/magpie/usage?period=today");
+        send(200, { ...sanitizeUsage(j), at: new Date().toISOString() });
       } else if (u.pathname === "/api/sessions") {
         const j = await upstream(
           "/v1/magpie/usage/requests?period=today&limit=100",

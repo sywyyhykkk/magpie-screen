@@ -16,6 +16,13 @@ import {
   type ScreenState,
   type ScreenData,
 } from "./types";
+import {
+  demoUsage,
+  emptyUsage,
+  compact,
+  providerName,
+  type UsageData,
+} from "./usage";
 interface Session {
   token: string;
   label: string;
@@ -24,6 +31,9 @@ interface Session {
 }
 const mode = ref("sim"),
   view = ref("route"),
+  usage = ref<UsageData | null>(null),
+  usageStatus = ref("idle"),
+  usageError = ref(""),
   sim = ref<ScreenState>("pending"),
   identity = ref(false),
   allSessions = ref(false),
@@ -148,6 +158,68 @@ const data = computed(() =>
             }
           : { ...traceToScreen(traces.value), events: events.value },
 );
+const usageData = computed(() =>
+  mode.value === "sim"
+    ? sim.value === "offline"
+      ? null
+      : ["empty", "idle"].includes(sim.value)
+        ? emptyUsage
+        : demoUsage
+    : usage.value,
+);
+const displayedUsageStatus = computed(() =>
+  mode.value === "sim"
+    ? sim.value === "offline"
+      ? "offline"
+      : "ready"
+    : usageStatus.value,
+);
+let usageController: AbortController | undefined,
+  usageGeneration = 0;
+async function connectUsage() {
+  usageController?.abort();
+  const own = ++usageGeneration;
+  usage.value = null;
+  usageError.value = "";
+  if (
+    mode.value !== "live" ||
+    !["usage", "overview"].includes(view.value) ||
+    !running.value
+  ) {
+    usageStatus.value = running.value ? "idle" : "paused";
+    return;
+  }
+  const c = new AbortController();
+  usageController = c;
+  usageStatus.value = "loading";
+  while (!c.signal.aborted && own === usageGeneration) {
+    try {
+      const j = await json("/api/usage", c.signal);
+      if (own !== usageGeneration) return;
+      usage.value = j;
+      usageStatus.value = "ready";
+      usageError.value = "";
+    } catch (e) {
+      if (c.signal.aborted || own !== usageGeneration) return;
+      usage.value = null;
+      usageStatus.value = "offline";
+      usageError.value = e instanceof Error ? e.message : "用量不可用";
+    }
+    await new Promise<void>((resolve) => {
+      const end = () => {
+        clearTimeout(timer);
+        c.signal.removeEventListener("abort", end);
+        resolve();
+      };
+      const timer = setTimeout(
+        end,
+        usageStatus.value === "offline" ? 3000 : 15000,
+      );
+      c.signal.addEventListener("abort", end, { once: true });
+    });
+  }
+}
+watch([mode, view, running], connectUsage);
 async function json(path: string, signal: AbortSignal) {
   const r = await fetch(path, { signal, cache: "no-store" });
   const j = await r.json();
@@ -162,7 +234,7 @@ async function connect() {
   events.value = [];
   error.value = "";
   at.value = "";
-  if (mode.value !== "live" || !running.value) {
+  if (mode.value !== "live" || view.value !== "route" || !running.value) {
     connection.value = "未连接";
     return;
   }
@@ -258,12 +330,23 @@ async function connect() {
   }
 }
 watch(
-  [mode, selected, manualActive, background, running, identity, allSessions],
+  [
+    mode,
+    view,
+    selected,
+    manualActive,
+    background,
+    running,
+    identity,
+    allSessions,
+  ],
   connect,
 );
 onUnmounted(() => {
   generation++;
   controller?.abort();
+  usageGeneration++;
+  usageController?.abort();
 });
 function choose() {
   manualActive.value = "";
@@ -275,7 +358,8 @@ function applyManual() {
 }
 function reconnect() {
   running.value = true;
-  connect();
+  if (view.value !== "route") connectUsage();
+  else connect();
 }
 </script>
 <template>
@@ -304,6 +388,8 @@ function reconnect() {
           >
             <RouteScreen
               :data="data"
+              :usage="usageData"
+              :usage-status="displayedUsageStatus"
               :speed="speed"
               :mode="mode"
               :view="view"
@@ -321,10 +407,15 @@ function reconnect() {
           <button :class="{ active: view === 'route' }" @click="view = 'route'">
             01 路由</button
           ><button
-            :class="{ active: view === 'service' }"
-            @click="view = 'service'"
+            :class="{ active: view === 'usage' }"
+            @click="view = 'usage'"
           >
-            02 服务状态
+            02 用量与供应商</button
+          ><button
+            :class="{ active: view === 'overview' }"
+            @click="view = 'overview'"
+          >
+            03 数据概览
           </button>
         </div>
       </div>
@@ -332,7 +423,14 @@ function reconnect() {
         <div class="panel-title">
           <span>控制台</span><small>SCREEN STUDIO</small>
         </div>
-        <div class="screen-readout">
+        <div class="screen-readout" v-if="view !== 'route'">
+          <span>{{ mode === "sim" ? "模拟" : "真实" }} · 今日全部来源</span>
+          <p>{{ usageError || "用量每 15 秒刷新，与路由会话筛选独立。" }}</p>
+          <p v-if="usageData?.at">
+            数据读取：{{ new Date(usageData.at).toLocaleTimeString() }}
+          </p>
+        </div>
+        <div class="screen-readout" v-else>
           <span
             >{{ mode === "sim" ? "模拟" : "真实" }} ·
             {{ labels[data.state] }}</span
@@ -364,32 +462,36 @@ function reconnect() {
               :class="{ active: sim === s }"
               @click="sim = s"
             >
-              {{ labels[s] }}
+              {{ view !== "route" && s === "empty" ? "暂无用量" : labels[s] }}
             </button>
           </div>
-          <button class="demo-play" @click="demoRun++">播放一次模拟事件</button>
-          <label class="field-label" for="demo-requests"
-            >模拟并发请求 <span>{{ demoRequests }}</span></label
-          >
-          <input
-            id="demo-requests"
-            type="range"
-            min="1"
-            max="4"
-            v-model.number="demoRequests"
-          />
-          <label class="field-label" for="demo-branches"
-            >模拟目的地 <span>{{ demoBranches }}</span></label
-          >
-          <input
-            id="demo-branches"
-            type="range"
-            min="1"
-            max="4"
-            v-model.number="demoBranches"
-          />
+          <button v-if="view === 'route'" class="demo-play" @click="demoRun++">
+            播放一次模拟事件
+          </button>
+          <template v-if="view === 'route'">
+            <label class="field-label" for="demo-requests"
+              >模拟并发请求 <span>{{ demoRequests }}</span></label
+            >
+            <input
+              id="demo-requests"
+              type="range"
+              min="1"
+              max="4"
+              v-model.number="demoRequests"
+            />
+            <label class="field-label" for="demo-branches"
+              >模拟目的地 <span>{{ demoBranches }}</span></label
+            >
+            <input
+              id="demo-branches"
+              type="range"
+              min="1"
+              max="4"
+              v-model.number="demoBranches"
+            />
+          </template>
         </template>
-        <template v-else
+        <template v-else-if="view === 'route'"
           ><div class="connection" :class="{ good: connection === '已连接' }">
             <i />{{ connection }}<span>{{ running ? "只读" : "已暂停" }}</span>
           </div>
@@ -443,7 +545,10 @@ function reconnect() {
             }}
           </p></template
         >
-        <div v-if="mode === 'live' && data.targets?.length" class="route-debug">
+        <div
+          v-if="view === 'route' && mode === 'live' && data.targets?.length"
+          class="route-debug"
+        >
           <label class="field-label"
             >实际目的地 · {{ data.targets.length }}</label
           >
@@ -458,6 +563,22 @@ function reconnect() {
             屏幕最多显示 4 个目的地、8 组飞行动画；其余记录在此列出。
           </p>
         </div>
+        <template v-if="view !== 'route' && mode === 'live'"
+          ><div class="actions">
+            <button @click="reconnect">重新读取</button
+            ><button @click="running = false">暂停</button>
+          </div>
+          <div
+            class="usage-debug"
+            v-for="p in usageData?.providers || []"
+            :key="p.id"
+          >
+            <b>{{ providerName(p.id) }}</b
+            ><span
+              >{{ compact(p.calls) }} 次 · {{ compact(p.tokens) }} tokens</span
+            >
+          </div></template
+        >
         <div class="divider" />
         <label class="field-label" for="scale"
           >预览缩放 <span>{{ scale }}%</span></label
@@ -467,19 +588,21 @@ function reconnect() {
           min="65"
           max="100"
           v-model.number="scale"
-        /><label class="field-label" for="speed"
-          >单次飞行 <span>{{ (speed * 0.4).toFixed(1) }}s</span></label
-        ><input
-          id="speed"
-          type="range"
-          min="1"
-          max="5"
-          step="0.1"
-          v-model.number="speed"
-        />
-        <div class="panel-note">
-          仅在新请求、开始尝试、首个响应或结束事件出现时飞行一次。<br />等待期间静止；首次连接只同步状态，不重放历史。
-        </div>
+        /><template v-if="view === 'route'"
+          ><label class="field-label" for="speed"
+            >单次飞行 <span>{{ (speed * 0.4).toFixed(1) }}s</span></label
+          ><input
+            id="speed"
+            type="range"
+            min="1"
+            max="5"
+            step="0.1"
+            v-model.number="speed"
+          />
+          <div class="panel-note">
+            仅在新请求、开始尝试、首个响应或结束事件出现时飞行一次。<br />等待期间静止；首次连接只同步状态，不重放历史。
+          </div>
+        </template>
         <div class="asset-strip">
           <img :src="chatgptIcon" alt="ChatGPT" title="ChatGPT" /><img
             :src="claudeIcon"
