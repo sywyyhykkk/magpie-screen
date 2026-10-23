@@ -122,6 +122,10 @@ export async function createDevice(root) {
   let writing = false;
   async function handler(req, res) {
     const path = new URL(req.url, 'http://127.0.0.1').pathname;
+    if (req.method === 'GET' && (path === '/api/device/open-config' || path === '/config')) {
+      res.writeHead(302, { Location: `http://${host()}/config`, 'Cache-Control': 'no-store' });
+      res.end(); return true;
+    }
     if (!path.startsWith('/api/device')) return false;
     const send = (code, v) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(v)); };
     if (!['127.0.0.1:4173', 'localhost:4173'].includes(req.headers.host) || req.headers.origin && !['http://127.0.0.1:4173', 'http://localhost:4173'].includes(req.headers.origin)) { send(403, { error: '来源不允许' }); return true; }

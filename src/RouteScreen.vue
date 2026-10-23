@@ -34,9 +34,7 @@ defineProps<{
         <code>实时路由</code><span>{{ mode === 'sim' ? '模拟' : '实时' }}</span>
       </div>
       <RouteGraph :data="data" :speed="speed" />
-      <div class="route-terminal-footer">
-        <span>● {{ labels[data.state] }}</span><span>{{ connected }}</span>
-      </div>
+
     </div>
     <LiquidScreen v-else-if="view === 'liquid'" :angle="angle" :upright="upright" :remaining="remaining" :caption="quotaCaption" :viscosity="viscosity" :provider="provider" />
     <div v-else class="orientation-layer" :style="{ transform: `rotate(${upright}deg)` }">
