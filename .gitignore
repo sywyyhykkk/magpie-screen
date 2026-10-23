@@ -4,3 +4,5 @@ dist/
 *.log
 .local/
 artifacts/
+device-backups/
+.DS_Store

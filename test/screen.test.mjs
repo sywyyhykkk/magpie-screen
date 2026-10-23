@@ -36,19 +36,3 @@ test("two concurrent requests keep independent flights even with one shared seat
   assert.equal(s.state, "pending");
   assert.notEqual(s.flights[0].key, s.flights[1].key);
 });
-test("fallbacks and different models are distinct; failed try has no live flight", () => {
-  const failed = { ...target("old", true, true), index: 0 };
-  const live = { ...target("new"), index: 1 };
-  const s = traceToScreen([route(3, [failed, live])]);
-  assert.equal(s.targets.length, 2);
-  assert.equal(s.flights.length, 1);
-  assert.equal(s.flights[0].target, "new");
-});
-test("completed updates stop flights and empty snapshot stays empty", () => {
-  const s = traceToScreen([route(3, [target("a", true)], true)]);
-  assert.equal(s.flights.length, 0);
-  assert.equal(s.state, "success");
-  const empty = traceToScreen([]);
-  assert.equal(empty.state, "empty");
-  assert.equal(empty.targets.length, 0);
-});

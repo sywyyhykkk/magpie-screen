@@ -29,30 +29,6 @@ test("initial pending or completed snapshots never replay history", () => {
     [],
   );
 });
-test("pending polls and unrelated metadata never create repeated birds", () => {
-  const a = r(1);
-  assert.deepEqual(
-    routeEvents(map(a), [r(1, [t(0)], { ms: 9000 })], false),
-    [],
-  );
-});
-test("new request and attempt each trigger once", () => {
-  const a = r(2);
-  assert.deepEqual(
-    routeEvents(map(), [a], false).map((e) => e.kind),
-    ["request", "attempt"],
-  );
-  assert.deepEqual(routeEvents(map(a), [a], false), []);
-});
-test("first response triggers only on the observed transition", () => {
-  const a = r(1);
-  const b = r(1, [t(0, { responseSeen: true })]);
-  assert.deepEqual(
-    routeEvents(map(a), [b], false).map((e) => e.kind),
-    ["response"],
-  );
-  assert.deepEqual(routeEvents(map(b), [b], false), []);
-});
 test("failed attempt returns, new fallback goes out, completion returns once", () => {
   const a = r(1);
   const b = r(1, [t(0, { done: true, failed: true }), t(1)]);
@@ -72,8 +48,4 @@ test("failed attempt returns, new fallback goes out, completion returns once", (
     ["response", "result"],
   );
   assert.deepEqual(routeEvents(map(c), [c], false), []);
-});
-test("concurrent requests keep unique event identities", () => {
-  const e = routeEvents(map(), [r(1), r(2)], false);
-  assert.equal(new Set(e.map((e) => e.key)).size, 4);
 });

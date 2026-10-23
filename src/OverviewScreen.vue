@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { compact, overviewMetrics, type UsageData } from "./usage";
+import { compact, providerName, overviewMetrics, type UsageData } from "./usage";
 const props = defineProps<{
   data: UsageData | null;
   mode: string;
@@ -20,22 +20,19 @@ const note = computed(() =>
         ? "正在读取…"
         : props.data?.calls === 0
           ? "今日暂无调用"
-          : "今日全部来源 · 自动刷新",
+          : "今日全部来源",
 );
 </script>
 <template>
-  <section class="overview-screen" aria-label="数据概览">
+  <section class="overview-screen merged-overview" aria-label="数据概览">
     <div class="usage-heading">
       <h2>今日概览</h2>
-      <span class="usage-badge" :class="{ demo: mode === 'sim' }">{{
-        mode === "sim" ? "模拟数据" : "真实数据"
+      <span class="overview-mode">{{
+        mode === "sim" ? "模拟" : "实时"
       }}</span>
     </div>
     <div class="overview-token">
-      <span class="overview-label">Token · 含缓存</span
-      ><strong :title="number(metrics.totalTokens)">{{
-        compact(metrics.totalTokens)
-      }}</strong>
+      <div class="overview-total-line"><strong :title="number(metrics.totalTokens)">{{ compact(metrics.totalTokens) }}</strong><span>Token · 含缓存</span></div>
       <div class="overview-parts">
         <span>输入 {{ compact(data?.input) }}</span
         ><span>输出 {{ compact(data?.output) }}</span
@@ -46,22 +43,14 @@ const note = computed(() =>
       <div class="overview-card">
         <span class="overview-label">请求</span
         ><strong>{{ number(data?.calls) }}</strong>
-        <div class="overview-small">
-          <span :class="{ bad: !!data?.errors }"
-            >{{ number(data?.errors) }} 次失败</span
-          ><span>成功 {{ pct(metrics.successRate) }}</span>
-        </div>
-        <small>{{ number(data?.retried) }} 次重试后成功</small>
+        <div class="overview-small">成功 {{ pct(metrics.successRate) }}</div>
       </div>
       <div class="overview-card">
-        <span class="overview-label">费用 · USD</span
+        <span class="overview-label">费用估算 · USD</span
         ><strong class="cost-value">{{
           data?.cost == null ? "—" : "≈$" + data.cost.toFixed(2)
         }}</strong
-        ><small>生效价格 · 估算</small
-        ><small v-if="data?.unpriced"
-          >{{ number(data.unpriced) }} 次调用未计价</small
-        >
+        ><small v-if="data?.unpriced">{{ number(data.unpriced) }} 次未计价</small>
       </div>
       <div class="overview-card">
         <span class="overview-label">缓存命中率</span
@@ -76,7 +65,6 @@ const note = computed(() =>
             }"
           />
         </div>
-        <small>提示词中的缓存读取占比</small>
       </div>
       <div class="overview-card speed-card">
         <span class="overview-label">输出速度</span>
@@ -88,16 +76,15 @@ const note = computed(() =>
           }}</strong
           ><span>token/秒</span>
         </div>
-        <small
-          >{{ number(metrics.speedSamples) }}
-          {{ metrics.speedIsFloor ? "次下限估算" : "次有效计时" }}</small
-        ><small
-          >首字平均
-          {{
-            metrics.ttft == null ? "—" : metrics.ttft.toFixed(2) + " 秒"
-          }}</small
-        ><small>{{ number(data?.timed) }} 次首字计时</small>
+        <small v-if="metrics.speedIsFloor">下限估算</small>
       </div>
+    </div>
+    <div class="overview-providers">
+      <div class="usage-provider-title"><b>供应商</b><span>输入＋输出</span></div>
+      <div v-for="p in data?.providers.slice(0, 3) || []" :key="p.id" class="compact-provider">
+        <span>{{ providerName(p.id) }}</span><div class="provider-track"><i :style="{ width: (data?.tokens && p.tokens != null ? Math.min(100, p.tokens / data.tokens * 100) : 0) + '%' }" /></div><b>{{ compact(p.tokens) }}</b>
+      </div>
+      <div v-if="!data?.providers.length" class="provider-empty">{{ status === 'offline' ? '供应商数据不可用' : status === 'loading' ? '读取中…' : '暂无供应商用量' }}</div>
     </div>
     <div class="overview-footer">{{ note }}</div>
   </section>

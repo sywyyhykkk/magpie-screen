@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from "vue";
 import RouteScreen from "./RouteScreen.vue";
+import { useQuotas } from "./useQuotas";
+import { useDeviceMotion } from "./useDeviceMotion";
 import magpieIcon from "./assets/magpie.svg";
 import chatgptIcon from "./assets/chatgpt.svg";
 import claudeIcon from "./assets/claude.svg";
@@ -30,7 +32,7 @@ interface Session {
   time: string;
 }
 const mode = ref("sim"),
-  view = ref("route"),
+  view = ref("liquid"),
   usage = ref<UsageData | null>(null),
   usageStatus = ref("idle"),
   usageError = ref(""),
@@ -54,6 +56,50 @@ const mode = ref("sim"),
   error = ref(""),
   scale = ref(100),
   speed = ref(2.4);
+const rotation = ref(0), autoUpright = ref(true), remaining = ref(80), viscosity = ref(.65), liquidProvider = ref("codex");
+const quotaMode = ref("live");
+const quota = useQuotas(computed(() => view.value === "liquid" && quotaMode.value === "live"));
+const displayRemaining = computed(() => quotaMode.value === "live" ? quota.remaining.value : remaining.value);
+const displayProvider = computed(() => quotaMode.value === "live" ? quota.account.value?.provider || "" : liquidProvider.value);
+const quotaCaption = computed(() => {
+  if (quotaMode.value === "sim") return "剩余额度 / REMAINING";
+  if (quota.status.value === "loading") return "正在读取额度…";
+  if (quota.status.value === "offline") return "额度数据不可用";
+  if (!quota.accounts.value.length) return "暂无额度账号";
+  if (quota.account.value?.unavailable) return "账号额度暂不可用";
+  if (!quota.window.value) return "暂无额度窗口";
+  return quota.remaining.value == null ? `${quota.window.value.name} · 余量未知` : `剩余额度 · ${quota.window.value.name}`;
+});
+const quotaTime = (value: string | null | undefined) => value ? new Date(value).toLocaleString() : "—";
+const { angle: deviceAngle, upright, moving } = useDeviceMotion(rotation, autoUpright);
+let shakeTimer: ReturnType<typeof setTimeout> | undefined;
+let shakeGeneration = 0;
+function stopShake() { clearTimeout(shakeTimer); shakeGeneration++; }
+function turn(delta: number) { stopShake(); rotation.value = Math.max(-360, Math.min(360, rotation.value + delta)); }
+let dragStart: { x: number; angle: number } | null = null;
+function beginRotate(event: PointerEvent) {
+  stopShake();
+  dragStart = { x: event.clientX, angle: rotation.value };
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+}
+function dragRotate(event: PointerEvent) {
+  if (dragStart) rotation.value = Math.max(-360, Math.min(360, dragStart.angle + (event.clientX - dragStart.x) * .7));
+}
+function shake() {
+  clearTimeout(shakeTimer);
+  const own = ++shakeGeneration;
+  const base = rotation.value;
+  const offsets = [35, -30, 21, -13, 0];
+  function next() {
+    if (own !== shakeGeneration) return;
+    const offset = offsets.shift();
+    if (offset == null) return;
+    rotation.value = Math.max(-360, Math.min(360, base + offset));
+    shakeTimer = setTimeout(next, 180);
+  }
+  next();
+}
+onUnmounted(() => clearTimeout(shakeTimer));
 let controller: AbortController | undefined,
   generation = 0;
 const fake = computed<ScreenData>(() => ({
@@ -183,7 +229,7 @@ async function connectUsage() {
   usageError.value = "";
   if (
     mode.value !== "live" ||
-    !["usage", "overview"].includes(view.value) ||
+    view.value !== "overview" ||
     !running.value
   ) {
     usageStatus.value = running.value ? "idle" : "paused";
@@ -367,8 +413,8 @@ function reconnect() {
     <header>
       <a class="brand" href="/"><img :src="magpieIcon" alt="Magpie" /></a>
       <div>
-        <h1>Magpie Screen</h1>
-        <p>你的桌面，一块小小的屏幕。</p>
+        <h1>magpie.screen<span class="terminal-cursor" aria-hidden="true">_</span></h1>
+        <p>你的桌面，一块小小的屏幕。 / LOCAL SCREEN STUDIO</p>
       </div>
       <span class="local-badge">LOCAL PREVIEW <i /> </span>
     </header>
@@ -378,51 +424,102 @@ function reconnect() {
           <span>01 / SCREEN PREVIEW</span
           ><span>方形 AMOLED · 480 × 480 设计画布</span>
         </div>
-        <div class="device-space">
-          <div
-            class="device"
-            :style="{
-              transform: `scale(${scale / 100})`,
-              '--speed': speed + 's',
-            }"
-          >
-            <RouteScreen
-              :data="data"
-              :usage="usageData"
-              :usage-status="displayedUsageStatus"
-              :speed="speed"
-              :mode="mode"
-              :view="view"
-              :connected="
-                mode === 'sim'
-                  ? sim === 'offline'
-                    ? '连接失败'
-                    : '模拟连接正常'
-                  : connection
-              "
-            />
+        <div class="terminal-window">
+          <div class="terminal-titlebar" aria-hidden="true">
+            <i class="window-dot" /><i class="window-dot" /><i class="window-dot" />
+            <code>magpie@local:~/{{ view }}</code><span>480 × 480</span>
+          </div>
+          <div class="device-space">
+            <div
+              class="device rotatable-device"
+              @pointerdown="beginRotate"
+              @pointermove="dragRotate"
+              @pointerup="dragStart = null"
+              @pointercancel="dragStart = null"
+              @lostpointercapture="dragStart = null"
+              :style="{
+                transform: `scale(calc(var(--preview-fit, 1) * ${scale / 100}))`,
+                rotate: `${deviceAngle}deg`,
+                '--speed': speed + 's',
+              }"
+            >
+              <RouteScreen
+                :data="data"
+                :angle="deviceAngle"
+                :upright="autoUpright ? upright : 0"
+                :remaining="displayRemaining"
+                :quota-caption="quotaCaption"
+                :viscosity="viscosity"
+                :provider="displayProvider"
+                :usage="usageData"
+                :usage-status="displayedUsageStatus"
+                :speed="speed"
+                :mode="mode"
+                :view="view"
+                :connected="
+                  mode === 'sim'
+                    ? sim === 'offline'
+                      ? '连接失败'
+                      : '模拟连接正常'
+                    : connection
+                "
+              />
+            </div>
           </div>
         </div>
+        <div class="rotation-preview-hint">↔ 拖动屏幕旋转 <span>{{ Math.round(deviceAngle) }}°</span></div>
         <div class="view-switch">
-          <button :class="{ active: view === 'route' }" @click="view = 'route'">
-            01 路由</button
-          ><button
-            :class="{ active: view === 'usage' }"
-            @click="view = 'usage'"
-          >
-            02 用量与供应商</button
-          ><button
-            :class="{ active: view === 'overview' }"
-            @click="view = 'overview'"
-          >
-            03 数据概览
-          </button>
+          <button :class="{ active: view === 'liquid' }" @click="view = 'liquid'">01 液体余量</button>
+          <button :class="{ active: view === 'route' }" @click="view = 'route'">02 路由</button>
+          <button :class="{ active: view === 'overview' }" @click="view = 'overview'">03 今日概览</button>
         </div>
       </div>
       <aside>
         <div class="panel-title">
           <span>控制台</span><small>SCREEN STUDIO</small>
         </div>
+          <div class="motion-controls">
+            <label class="field-label" for="rotation">设备旋转 <span>{{ Math.round(deviceAngle) }}°</span></label>
+            <input id="rotation" type="range" min="-360" max="360" step="1" v-model.number="rotation" @pointerdown="stopShake" @keydown="stopShake" />
+            <div class="rotation-actions">
+              <button @click="turn(-90)">↶ 90°</button><button @click="turn(90)">↷ 90°</button>
+              <button @click="turn(180)">倒置</button><button @click="turn(-rotation)">归零</button>
+            </div>
+            <div class="motion-state"><span :class="{ moving }">{{ moving ? '旋转中 · 内容随屏幕' : view === 'liquid' ? '已停稳 · 液体自然回落' : '已停稳' }}</span></div>
+            <label class="check"><input type="checkbox" v-model="autoUpright" />停止后翻正内容</label>
+          </div>
+        <template v-if="view === 'liquid'">
+          <label class="field-label">额度数据源</label>
+          <div class="segmented"><button :class="{ active: quotaMode === 'live' }" @click="quotaMode = 'live'">真实 Magpie</button><button :class="{ active: quotaMode === 'sim' }" @click="quotaMode = 'sim'">模拟预览</button></div>
+          <template v-if="quotaMode === 'live'">
+            <div class="screen-readout quota-readout"><span>{{ quota.status.value === 'loading' ? '正在读取…' : quota.status.value === 'offline' ? '额度读取失败' : '真实额度 · 每 30 秒读取' }}</span><p>{{ quota.error.value || quotaCaption }}</p></div>
+            <label class="field-label" for="quota-account">账号</label>
+            <select id="quota-account" v-model="quota.accountId.value" :disabled="!quota.accounts.value.length">
+              <option v-if="!quota.accounts.value.length" value="">暂无账号</option>
+              <option v-for="a in quota.accounts.value" :key="a.id" :value="a.id">{{ a.label }}{{ a.plan ? ' · ' + a.plan : '' }}</option>
+            </select>
+            <label class="field-label" for="quota-window">额度窗口</label>
+            <select id="quota-window" v-model="quota.windowId.value" :disabled="!quota.account.value?.windows.length">
+              <option v-if="!quota.account.value?.windows.length" value="">暂无窗口</option>
+              <option v-for="w in quota.account.value?.windows || []" :key="w.id" :value="w.id">{{ w.name }} · {{ w.remaining == null ? '未知' : w.remaining + '% 剩余' }}</option>
+            </select>
+            <p class="hint">Magpie 采集：{{ quotaTime(quota.account.value?.readAt) }}<br />窗口重置：{{ quotaTime(quota.window.value?.resetsAt) }}<br />网页读取：{{ quotaTime(quota.fetchedAt.value) }}</p>
+            <button class="demo-play" @click="quota.refresh">刷新额度</button>
+          </template>
+          <template v-else>
+            <div class="notice">模拟预览 · 手动调整余量</div>
+            <label class="field-label">供应商</label>
+            <div class="segmented"><button :class="{ active: liquidProvider === 'codex' }" @click="liquidProvider = 'codex'">Codex / 黑白</button><button :class="{ active: liquidProvider === 'claude' }" @click="liquidProvider = 'claude'">Claude / 橙色</button></div>
+            <label class="field-label" for="remaining">剩余额度 <span>{{ remaining }}%</span></label>
+            <input id="remaining" type="range" min="0" max="100" v-model.number="remaining" />
+          </template>
+          <label class="field-label" for="viscosity">液体黏性 <span>{{ Math.round(viscosity * 100) }}%</span></label>
+          <input id="viscosity" type="range" min="0" max="1" step=".01" v-model.number="viscosity" />
+          <div class="viscosity-labels"><span>轻盈 · 回荡</span><span>厚重 · 缓流</span></div>
+          <button class="demo-play" @click="shake">轻晃一次</button>
+          <p class="panel-note">整个屏幕是容器。液量保持不变，旋转只改变液体分布。{{ quotaMode === 'sim' ? '当前余量为模拟值。' : '液位对应所选账号、窗口的剩余百分比。' }}</p>
+        </template>
+        <template v-else>
         <div class="screen-readout" v-if="view !== 'route'">
           <span>{{ mode === "sim" ? "模拟" : "真实" }} · 今日全部来源</span>
           <p>{{ usageError || "用量每 15 秒刷新，与路由会话筛选独立。" }}</p>
@@ -579,6 +676,15 @@ function reconnect() {
             >
           </div></template
         >
+        <div v-if="view === 'overview'" class="panel-note">
+          失败请求：{{ usageData?.errors ?? '—' }} 次<br />
+          缓存命中率：缓存读取占提示词总量的比例<br />
+          重试后成功：{{ usageData?.retried ?? '—' }} 次<br />
+          首字计时样本：{{ usageData?.timed ?? '—' }} 次<br />
+          输出计时样本：{{ usageData?.decodeN ?? '—' }} 次<br />
+          平均首字：{{ usageData?.timed && usageData?.ttftMs != null ? (usageData.ttftMs / usageData.timed / 1000).toFixed(2) + ' 秒' : '—' }}
+        </div>
+        </template>
         <div class="divider" />
         <label class="field-label" for="scale"
           >预览缩放 <span>{{ scale }}%</span></label

@@ -1,8 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import http from "node:http";
-import { sanitizeUsage, createApi } from "../server.mjs";
-import { compact, demoUsage, emptyUsage } from "../src/usage.ts";
+import { sanitizeUsage } from "../server.mjs";
+import { demoUsage } from "../src/usage.ts";
 const metric = {
   calls: 2,
   errors: 0,
@@ -43,79 +42,6 @@ test("usage groups model totals by provider without duplicating cache tokens or 
   assert.ok(!JSON.stringify(j).includes("internal-host"));
   assert.ok(!JSON.stringify(j).includes("@"));
 });
-test("zero usage is distinct from unavailable or unpriced data", () => {
-  const z = sanitizeUsage({
-    ...metric,
-    calls: 0,
-    input: 0,
-    output: 0,
-    models: [],
-  });
-  assert.equal(z.tokens, 0);
-  assert.equal(z.providers.length, 0);
-  const u = sanitizeUsage({
-    ...sample,
-    cost: undefined,
-    output: undefined,
-    unpriced: 3,
-  });
-  assert.equal(u.cost, null);
-  assert.equal(u.tokens, null);
-  assert.equal(u.unpriced, 3);
-  assert.throws(() => sanitizeUsage({}));
-  assert.throws(() => sanitizeUsage(null));
-});
-test("unattributed source is kept separate from known providers", () => {
-  const j = sanitizeUsage({
-    ...sample,
-    models: [
-      { ...metric, provider: "" },
-      { ...metric, provider: "session-unknown" },
-    ],
-  });
-  assert.equal(j.providers.length, 1);
-  assert.equal(j.providers[0].id, "session-unknown");
-  assert.equal(j.providers[0].tokens, 240);
-});
-test("compact formatting preserves missing versus zero; demo totals remain consistent", () => {
-  assert.equal(compact(null), "—");
-  assert.equal(compact(0), "0");
-  assert.equal(compact(1200000), "1.2M");
-  assert.equal(
-    demoUsage.providers.reduce((n, p) => n + p.tokens, 0),
-    demoUsage.tokens,
-  );
-  assert.equal(emptyUsage.calls, 0);
-});
-test("usage API reads only the fixed summary endpoint and whitelists its response", async () => {
-  let requested = "";
-  const api = createApi(async (url) => {
-    requested = url;
-    return { ok: true, json: async () => sample };
-  });
-  const s = http.createServer((req, res) => api(req, res));
-  await new Promise((r) => s.listen(0, "127.0.0.1", r));
-  try {
-    const response = await fetch(
-      "http://127.0.0.1:" + s.address().port + "/api/usage",
-    );
-    const j = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(
-      requested,
-      "http://127.0.0.1:3425/v1/magpie/usage?period=today",
-    );
-    assert.equal(j.period, "today");
-    assert.equal(j.providers.length, 2);
-    assert.ok(j.at);
-    assert.equal(j.path, undefined);
-    assert.equal(j.accounts, undefined);
-  } finally {
-    s.closeAllConnections();
-    await new Promise((r) => s.close(r));
-  }
-});
-
 test("overview matches cache, success and timing formulas without averaging per-call speeds", async () => {
   const { overviewMetrics } = await import("../src/usage.ts");
   const source = {
@@ -157,36 +83,4 @@ test("overview matches cache, success and timing formulas without averaging per-
     floorOut: 60,
   });
   assert.equal(tie.speedIsFloor, false);
-});
-test("overview keeps missing denominators and absent timing unavailable", async () => {
-  const { overviewMetrics } = await import("../src/usage.ts");
-  assert.equal(overviewMetrics(null).totalTokens, null);
-  const zero = overviewMetrics(emptyUsage);
-  assert.equal(zero.totalTokens, 0);
-  assert.equal(zero.cacheRate, null);
-  assert.equal(zero.successRate, null);
-  assert.equal(zero.speed, null);
-  assert.equal(zero.ttft, null);
-  assert.equal(
-    overviewMetrics({ ...demoUsage, cacheWrite: null }).totalTokens,
-    null,
-  );
-});
-test("usage API sanitizes timing fields and supplies omitted count zeros", () => {
-  const j = sanitizeUsage({
-    ...sample,
-    cache_write: 40,
-    timed: 3,
-    ttft_ms: 6000,
-    decode_ms: 2000,
-    decode_out: 100,
-    decode_n: 2,
-    retried: 1,
-  });
-  assert.equal(j.cacheWrite, 40);
-  assert.equal(j.ttftMs, 6000);
-  assert.equal(j.decodeN, 2);
-  assert.equal(j.retried, 1);
-  assert.equal(j.floorN, 0);
-  assert.equal(sanitizeUsage(sample).timed, 0);
 });

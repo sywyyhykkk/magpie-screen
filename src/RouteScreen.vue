@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { labels, type ScreenData } from "./types";
 import RouteGraph from "./RouteGraph.vue";
-import UsageScreen from "./UsageScreen.vue";
+import LiquidScreen from "./LiquidScreen.vue";
 import OverviewScreen from "./OverviewScreen.vue";
-import { overviewMetrics, type UsageData } from "./usage";
+import { type UsageData } from "./usage";
 defineProps<{
   data: ScreenData;
+  angle: number;
+  upright: number;
+  remaining: number | null;
+  quotaCaption: string;
+  viscosity: number;
+  provider: string;
   speed?: number;
   mode: string;
   view: string;
@@ -18,16 +24,25 @@ defineProps<{
   <div
     class="screen canvas-only"
     :class="data.state"
-    role="img"
-    :aria-label="`${mode === 'live' ? '真实' : '模拟'}：${view === 'route' ? labels[data.state] + '，' + data.model : (view === 'overview' ? '今日概览，' + (overviewMetrics(usage).totalTokens ?? '尚未读取') : '今日用量，' + (usage?.tokens ?? '尚未读取')) + ' tokens'}`"
+    role="group"
+    :aria-label="view === 'liquid' ? '供应商余量' : view === 'route' ? labels[data.state] : '今日概览'"
   >
-    <RouteGraph v-if="view === 'route'" :data="data" :speed="speed" />
-    <UsageScreen
-      v-else-if="view === 'usage'"
-      :data="usage"
-      :status="usageStatus"
-      :mode="mode"
-    />
-    <OverviewScreen v-else :data="usage" :status="usageStatus" :mode="mode" />
+    <Transition name="terminal-page" mode="out-in">
+      <div :key="view" class="screen-page">
+    <div v-if="view === 'route'" class="orientation-layer" :style="{ transform: `rotate(${upright}deg)` }">
+      <div class="route-terminal-heading">
+        <code>实时路由</code><span>{{ mode === 'sim' ? '模拟' : '实时' }}</span>
+      </div>
+      <RouteGraph :data="data" :speed="speed" />
+      <div class="route-terminal-footer">
+        <span>● {{ labels[data.state] }}</span><span>{{ connected }}</span>
+      </div>
+    </div>
+    <LiquidScreen v-else-if="view === 'liquid'" :angle="angle" :upright="upright" :remaining="remaining" :caption="quotaCaption" :viscosity="viscosity" :provider="provider" />
+    <div v-else class="orientation-layer" :style="{ transform: `rotate(${upright}deg)` }">
+      <OverviewScreen :data="usage" :status="usageStatus" :mode="mode" />
+    </div>
+      </div>
+    </Transition>
   </div>
 </template>

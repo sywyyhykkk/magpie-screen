@@ -114,11 +114,40 @@ export function sanitizeUsage(j) {
     floorN: optional("floor_n"),
   };
 }
+const quotaText = (value) => typeof value === "string" ? value.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 160) : "";
+const quotaDate = (value) => typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : null;
+const percentage = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+export function sanitizeQuotas(j, accountId) {
+  if (!j || !Array.isArray(j.data)) throw Error("quota schema");
+  return j.data.filter(a => a && typeof a === "object").map((a) => {
+    const provider = safe(a.provider) || "unknown";
+    const name = quotaText(a.name), user = quotaText(a.user);
+    const id = accountId(JSON.stringify([provider, a.name || "", a.user || "", a.kind || ""]));
+    const counts = new Map();
+    return {
+      id, provider, label: [name || provider, user].filter(Boolean).join(" · "),
+      plan: quotaText(a.plan), readAt: quotaDate(a.readAt),
+      unavailable: !!a.error,
+      windows: (Array.isArray(a.windows) ? a.windows : []).filter(w => w && typeof w === "object").map(w => {
+        const name = quotaText(w.name) || "额度窗口";
+        const occurrence = counts.get(name) || 0;
+        counts.set(name, occurrence + 1);
+        const used = percentage(w.used);
+        return {
+          id: `${name}:${occurrence}`, name,
+          remaining: a.error || w.error ? null : w.remaining != null ? percentage(w.remaining) : used == null ? null : 100 - used,
+          resetsAt: quotaDate(w.resetsAt),
+        };
+      }),
+    };
+  });
+}
 export function createApi(fetcher = fetch) {
   const sessions = new Map(),
     reverse = new Map(),
     accounts = new Map(),
-    matches = new Map();
+    matches = new Map(),
+    quotaIds = new Map();
   const alias = (map, key, prefix) => {
     if (!map.has(key))
       map.set(key, `${prefix} ${String(map.size + 1).padStart(2, "0")}`);
@@ -164,6 +193,13 @@ export function createApi(fetcher = fetch) {
       if (u.pathname === "/api/health") {
         await upstream("/api/hello");
         send(200, { connected: true, at: new Date().toISOString() });
+      } else if (u.pathname === "/api/quotas") {
+        const j = await upstream("/v1/magpie/quotas");
+        const data = sanitizeQuotas(j, key => {
+          if (!quotaIds.has(key)) quotaIds.set(key, randomUUID());
+          return quotaIds.get(key);
+        });
+        send(200, { accounts: data, at: new Date().toISOString() });
       } else if (u.pathname === "/api/usage") {
         const j = await upstream("/v1/magpie/usage?period=today");
         send(200, { ...sanitizeUsage(j), at: new Date().toISOString() });

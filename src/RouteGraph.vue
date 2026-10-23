@@ -20,8 +20,8 @@ const rowY = (index: number) =>
     : targets.value.length === 2
       ? 176 + index * 128
       : targets.value.length === 3
-        ? 112 + index * 128
-        : 84 + index * 104;
+        ? 132 + index * 108
+        : 100 + index * 92;
 const sourceNames: Record<string, string> = {
   codex: "Codex",
   chatgpt: "ChatGPT",
@@ -161,7 +161,7 @@ const state = (t: ScreenTarget) =>
       :key="t.key"
       class="target-row"
       :class="{ live: t.active, failed: t.failed }"
-      :style="{ top: rowY(i) - 32 + 'px' }"
+      :style="{ top: rowY(i) - 42 + 'px' }"
     >
       <div class="target-account">
         <span class="target-dot" /><img :src="iconFor(t.provider)" alt="" /><b
