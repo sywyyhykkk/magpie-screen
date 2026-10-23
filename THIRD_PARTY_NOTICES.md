@@ -5,3 +5,5 @@
 - peterroe/magpie-usage-display: hardware and architecture reference; no firmware/fonts copied. Original MIT notice Copyright (c) 2026 Jay Yao is retained in LICENSES/magpie-usage-display-MIT.txt.
 - Firmware ASCII font (`firmware/src/FreeSansBold10pt7b.h`): copied from GFX Library for Arduino 1.5.9, `examples/HelloWorldGfxfont/FreeSansBold10pt7b.h`, derived from GNU FreeFont FreeSans. Source: https://github.com/moononournation/Arduino_GFX/tree/v1.5.9/examples/HelloWorldGfxfont . GNU FreeFont licensing and font embedding exception: https://www.gnu.org/software/freefont/license.html .
 - Firmware hardware initialization is based on Waveshare's ESP32-S3-Touch-AMOLED-2.16 Arduino examples. Arduino_GFX, SensorLib, XPowersLib and ArduinoJson remain version-pinned PlatformIO dependencies; their notices are retained in their packages.
+
+- Firmware UI icons in `ui_assets.h` are rasterized from the same MIT-licensed SVG assets in `src/assets/`. Grayscale text glyphs are generated with the macOS STHeiti Medium system font, following the existing Chinese-label build workflow; the font file itself is not bundled.
