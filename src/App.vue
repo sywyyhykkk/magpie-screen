@@ -564,7 +564,7 @@ function reconnect() {
           </p>
         </div>
         <template v-if="view !== 'route' && mode === 'live'"
-          ><div class="actions">
+          ><div class="actions usage-actions">
             <button @click="reconnect">重新读取</button
             ><button @click="running = false">暂停</button>
           </div>

@@ -558,6 +558,9 @@ input:not([type]) {
   display: flex;
   gap: 8px;
 }
+.usage-actions {
+  margin-top: 16px;
+}
 .actions button {
   font-size: 11px;
 }
