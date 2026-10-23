@@ -489,10 +489,11 @@ function reconnect() {
             <label class="check"><input type="checkbox" v-model="autoUpright" />停止后翻正内容</label>
           </div>
         <template v-if="view === 'liquid'">
+          <div v-if="quotaMode === 'live'" class="screen-readout"><span>{{ quota.status.value === 'loading' ? '正在读取…' : quota.status.value === 'offline' ? '额度读取失败' : '真实额度 · 每 30 秒读取' }}</span><p>{{ quota.error.value || quotaCaption }}</p></div>
+          <div v-else class="screen-readout"><span>模拟 · 液体余量</span><p>手动调整余量，不读取真实额度。</p></div>
           <label class="field-label">额度数据源</label>
-          <div class="segmented"><button :class="{ active: quotaMode === 'live' }" @click="quotaMode = 'live'">真实 Magpie</button><button :class="{ active: quotaMode === 'sim' }" @click="quotaMode = 'sim'">模拟预览</button></div>
+          <div class="segmented"><button :class="{ active: quotaMode === 'sim' }" @click="quotaMode = 'sim'">模拟预览</button><button :class="{ active: quotaMode === 'live' }" @click="quotaMode = 'live'">真实 Magpie</button></div>
           <template v-if="quotaMode === 'live'">
-            <div class="screen-readout quota-readout"><span>{{ quota.status.value === 'loading' ? '正在读取…' : quota.status.value === 'offline' ? '额度读取失败' : '真实额度 · 每 30 秒读取' }}</span><p>{{ quota.error.value || quotaCaption }}</p></div>
             <label class="field-label" for="quota-account">账号</label>
             <select id="quota-account" v-model="quota.accountId.value" :disabled="!quota.accounts.value.length">
               <option v-if="!quota.accounts.value.length" value="">暂无账号</option>

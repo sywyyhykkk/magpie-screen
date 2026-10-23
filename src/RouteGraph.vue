@@ -143,9 +143,9 @@ const state = (t: ScreenTarget) =>
     </svg>
     <div class="route-node source" :style="{ top: mid - 40 + 'px' }">
       <div class="source-icons">
-        <img v-for="s in sources" :key="s" :src="iconFor(s)" alt="" />
+        <img v-for="s in sources.slice(0, 3)" :key="s" :src="iconFor(s)" alt="" />
       </div>
-      <b
+      <b :title="sources.map((s) => sourceNames[s] || s).join('、')"
         ><i />{{
           sources.length > 1
             ? "多客户端"
@@ -171,7 +171,7 @@ const state = (t: ScreenTarget) =>
       </div>
       <div class="target-meta">
         <code :title="`${t.provider}/${t.model}`">{{ t.model }}</code
-        ><span
+        ><span :title="state(t) + (t.active > 1 ? ' ×' + t.active : '')"
           >{{ state(t)
           }}<template v-if="t.active > 1"> ×{{ t.active }}</template></span
         >

@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { compact, providerName, overviewMetrics, type UsageData } from "./usage";
+import { compact, overviewProviders, overviewMetrics, type UsageData } from "./usage";
 const props = defineProps<{
   data: UsageData | null;
   mode: string;
   status: string;
 }>();
+const providers = computed(() => overviewProviders(props.data?.providers || []));
+const displayCount = (n: number | null | undefined) => n != null && n >= 100000 ? compact(n) : number(n);
 const metrics = computed(() => overviewMetrics(props.data));
+const speedLabel = computed(() => {
+  const speed = metrics.value.speed;
+  return speed == null ? '—' : (metrics.value.speedIsFloor ? '≥' : '')
+    + (speed >= 1000 ? compact(speed) : Math.round(speed));
+});
 const number = (n: number | null | undefined) =>
   n == null ? "—" : n.toLocaleString();
 const pct = (n: number | null) =>
@@ -42,15 +49,15 @@ const note = computed(() =>
     <div class="overview-grid">
       <div class="overview-card">
         <span class="overview-label">请求</span
-        ><strong>{{ number(data?.calls) }}</strong>
+        ><strong :title="number(data?.calls)">{{ displayCount(data?.calls) }}</strong>
         <div class="overview-small">成功 {{ pct(metrics.successRate) }}</div>
       </div>
       <div class="overview-card">
         <span class="overview-label">费用估算 · USD</span
-        ><strong class="cost-value">{{
-          data?.cost == null ? "—" : "≈$" + data.cost.toFixed(2)
+        ><strong class="cost-value" :title="data?.cost == null ? undefined : data.cost.toFixed(2) + ' USD'">{{
+          data?.cost == null ? "—" : "≈$" + (data.cost >= 1000 ? compact(data.cost) : data.cost.toFixed(2))
         }}</strong
-        ><small v-if="data?.unpriced">{{ number(data.unpriced) }} 次未计价</small>
+        ><small v-if="data?.unpriced" :title="number(data.unpriced) + ' 次未计价'">{{ displayCount(data.unpriced) }} 次未计价</small>
       </div>
       <div class="overview-card">
         <span class="overview-label">缓存命中率</span
@@ -69,11 +76,7 @@ const note = computed(() =>
       <div class="overview-card speed-card">
         <span class="overview-label">输出速度</span>
         <div class="overview-speed">
-          <strong>{{
-            metrics.speed == null
-              ? "—"
-              : (metrics.speedIsFloor ? "≥" : "") + Math.round(metrics.speed)
-          }}</strong
+          <strong :class="{ 'compact-speed': speedLabel.length > 5 }" :title="metrics.speed == null ? undefined : metrics.speed.toLocaleString() + ' token/秒'">{{ speedLabel }}</strong
           ><span>token/秒</span>
         </div>
         <small v-if="metrics.speedIsFloor">下限估算</small>
@@ -81,8 +84,8 @@ const note = computed(() =>
     </div>
     <div class="overview-providers">
       <div class="usage-provider-title"><b>供应商</b><span>输入＋输出</span></div>
-      <div v-for="p in data?.providers.slice(0, 3) || []" :key="p.id" class="compact-provider">
-        <span>{{ providerName(p.id) }}</span><div class="provider-track"><i :style="{ width: (data?.tokens && p.tokens != null ? Math.min(100, p.tokens / data.tokens * 100) : 0) + '%' }" /></div><b>{{ compact(p.tokens) }}</b>
+      <div v-for="p in providers" :key="p.key" class="compact-provider">
+        <span :title="p.title">{{ p.label }}</span><div class="provider-track"><i :style="{ width: (data?.tokens && p.tokens != null ? Math.min(100, p.tokens / data.tokens * 100) : 0) + '%' }" /></div><b :title="number(p.tokens)">{{ compact(p.tokens) }}</b>
       </div>
       <div v-if="!data?.providers.length" class="provider-empty">{{ status === 'offline' ? '供应商数据不可用' : status === 'loading' ? '读取中…' : '暂无供应商用量' }}</div>
     </div>

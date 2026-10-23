@@ -88,9 +88,12 @@ header p {
   color: var(--muted);
   margin: 0;
 }
+.local-badge,
+.config-app header > a {
+  font-size: 16px;
+}
 .local-badge {
   margin-left: auto;
-  font-size: 9px;
   letter-spacing: 1.6px;
   color: var(--muted);
 }
@@ -1635,7 +1638,6 @@ footer { line-height: 1.7; letter-spacing: .3px; }
 
 /* Keep the fluid free of the terminal scanline texture. */
 .screen:has(.liquid-screen)::after { display: none; }
-.quota-readout { margin: 16px 0 0; }
 
 /* 480px / 2.16-inch display: readable text, fewer explanatory lines. */
 .route-terminal-heading { top: 16px; left: 20px; right: 20px; font-size: 20px; }
@@ -1685,3 +1687,31 @@ footer { line-height: 1.7; letter-spacing: .3px; }
 .compact-provider .provider-track, .compact-provider .provider-track i { height: 4px; }
 .provider-empty { font-size: 16px; padding: 8px 0; }
 .merged-overview .overview-footer { font-size: 16px; line-height: 20px; padding-top: 5px; color: #acbcba; }
+
+/* Bound text to its 480px screen slot; full labels remain available on hover. */
+.canvas-only .source-icons { max-width: 100%; flex-wrap: wrap; justify-content: center; }
+.canvas-only .route-node b { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.canvas-only .target-account b { min-width: 0; }
+.canvas-only .target-meta { min-width: 0; }
+.canvas-only .target-meta code, .canvas-only .target-meta span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.route-terminal-footer > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.merged-overview > * { flex-shrink: 0; min-width: 0; }
+.merged-overview .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.merged-overview .overview-card { min-width: 0; }
+.overview-total-line { gap: 10px; }
+.overview-total-line strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overview-total-line > span { flex: none; }
+.merged-overview .overview-parts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.merged-overview .overview-parts > span,
+.merged-overview .overview-card > strong,
+.merged-overview .overview-card small,
+.merged-overview .overview-speed strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.merged-overview .overview-speed > span { flex: none; }
+.compact-provider { display: grid; grid-template-columns: 100px minmax(0, 1fr) 76px; }
+.compact-provider > span { width: auto; min-width: 0; }
+.compact-provider > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+aside { min-width: 0; }
+aside select, aside .input-row input { min-width: 0; max-width: 100%; }
+aside .screen-readout, aside .hint, aside .usage-debug { overflow-wrap: anywhere; }
+.canvas-only .trace-graph .source { left: 10px; width: 84px; }
+.merged-overview .overview-speed strong.compact-speed { font-size: 20px; letter-spacing: -0.7px; }
