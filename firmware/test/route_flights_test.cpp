@@ -48,16 +48,18 @@ int main() {
   assert(active(next, next));
   assert(enqueue("1:100", next) == next + duration);
 
-  // Both directions pause visibly at the hub before the following leg starts.
+  // Both directions disappear at the hub for 500ms before the next leg starts.
   for (const std::string arrival : {"request", "response"}) {
     flights.clear();
     const uint32_t start = UINT32_MAX - 400;
     assert(enqueue("1:100", start, arrival) == start);
     const uint32_t departure = start + duration + hubPause;
     assert(enqueue("1:100", start, arrival == "request" ? "attempt" : "result") == departure);
+    assert(active(start + duration - 1, start));
+    assert(hubPause == 500);
     for (uint32_t ms = duration; ms < duration + hubPause; ++ms) {
       const uint32_t now = start + ms;
-      assert(active(now, start, lifetime(arrival)));
+      assert(!active(now, start));
       assert(!finished(now, start, lifetime(arrival)));
       assert(progress(now, start) == 1.f);
       assert(!active(now, departure));

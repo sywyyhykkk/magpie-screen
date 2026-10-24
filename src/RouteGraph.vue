@@ -202,7 +202,6 @@ const state = (t: ScreenTarget) =>
       class="trace-bird"
       :class="{
         failed: p.event.failed,
-        arriving: p.hold > 0,
         returning: p.event.kind === 'response' || p.event.kind === 'result',
       }"
       :style="birdStyle(p)"

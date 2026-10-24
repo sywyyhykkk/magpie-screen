@@ -13,9 +13,10 @@ inline int32_t elapsed(uint32_t now, uint32_t start) {
   return static_cast<int32_t>(now - start);
 }
 
-inline bool active(uint32_t now, uint32_t start, uint32_t span = duration) {
+// The bird disappears on arrival; the queue retains the hidden hub pause.
+inline bool active(uint32_t now, uint32_t start) {
   const auto age = elapsed(now, start);
-  return age >= 0 && age < static_cast<int32_t>(span);
+  return age >= 0 && age < static_cast<int32_t>(duration);
 }
 
 inline bool finished(uint32_t now, uint32_t start, uint32_t span = duration) {
