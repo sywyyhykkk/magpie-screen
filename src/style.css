@@ -1665,6 +1665,7 @@ footer { line-height: 1.7; letter-spacing: .3px; }
 .overview-battery { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 18px; font-variant-numeric: tabular-nums; }
 .overview-battery svg { width: 31px; height: 18px; }
 .overview-battery.low { color: #ff7542; }
+.overview-battery.charging { color: var(--green); }
 .merged-overview .overview-mode { margin-left: 16px; font-size: 16px; color: var(--muted); }
 .merged-overview .overview-token { margin-top: 6px; padding: 0 0 8px; }
 .overview-total-line { display: flex; align-items: baseline; gap: 14px; height: 56px; }

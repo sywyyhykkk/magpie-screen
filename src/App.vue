@@ -57,8 +57,10 @@ const mode = ref("sim"),
   scale = ref(100),
   speed = ref(2.4);
 const batteryPercent = ref<number | null>(null);
+const batteryCharging = ref(false);
 watch(view, (current, _, onCleanup) => {
   batteryPercent.value = null;
+  batteryCharging.value = false;
   if (current !== "overview") return;
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -70,12 +72,14 @@ watch(view, (current, _, onCleanup) => {
       const device = await response.json();
       if (controller.signal.aborted) return;
       const percent = device.status?.batteryPercent;
+      batteryCharging.value = !!device.connected && device.status?.battery === true && device.status?.charging === true;
       batteryPercent.value = device.connected && device.status?.battery === true
         && typeof percent === "number" && Number.isFinite(percent) && percent >= 0 && percent <= 100
         ? Math.round(percent) : null;
     } catch {
       if (controller.signal.aborted) return;
       batteryPercent.value = null;
+      batteryCharging.value = false;
     }
     timer = setTimeout(readBattery, 2000);
   }
@@ -479,6 +483,7 @@ function reconnect() {
                 :usage="usageData"
                 :usage-status="displayedUsageStatus"
                 :battery-percent="batteryPercent"
+                :battery-charging="batteryCharging"
                 :speed="speed"
                 :mode="mode"
                 :view="view"

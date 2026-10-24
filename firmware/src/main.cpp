@@ -19,7 +19,7 @@
 #include <XPowersLib.h>
 
 constexpr int W = 480, H = 24;
-constexpr char VERSION[] = "0.3.11";
+constexpr char VERSION[] = "0.3.14";
 Arduino_ESP32QSPI bus(12, 38, 4, 5, 6, 7, false);
 Arduino_CO5300 display(&bus, 39, 0, false, 480, 480, 0, 0, 0, 0);
 class StripCanvas : public Arduino_Canvas {
@@ -511,12 +511,19 @@ void drawUI(Arduino_Canvas &c,int) {
   uiText(c,24,42,screen==2?"实时路由":"今日概览",uiFont22,green);
   if(screen==3) {
     bool known=batteryPresent && batteryPercent>=0 && batteryPercent<=100;
-    uint16_t color=known && batteryPercent<=10 ? 0xfba8 : muted;
-    c.drawRoundRect(306,27,27,15,2,color);
-    c.fillRect(333,32,3,5,color);
-    if(known) c.fillRect(309,30,(21*batteryPercent+50)/100,9,color);
+    bool isCharging=batteryPresent && charging;
+    uint16_t color=isCharging ? green : known && batteryPercent<=10 ? 0xfba8 : muted;
     String label=known ? String(batteryPercent)+"%" : "--%";
-    uiText(c,400-textWidth(label,uiFont18),42,label,uiFont18,color);
+    auto bounds=inkBounds(label,uiFont18);
+    int labelX=400-bounds.right;
+    int iconX=labelX+bounds.left-6-30;
+    c.drawRoundRect(iconX,29,27,15,2,color);
+    c.fillRect(iconX+27,34,3,5,color);
+    if(isCharging) {
+      c.fillTriangle(iconX+16,31,iconX+9,37,iconX+14,37,color);
+      c.fillTriangle(iconX+13,36,iconX+18,36,iconX+11,42,color);
+    } else if(known) c.fillRect(iconX+3,32,(21*batteryPercent+50)/100,9,color);
+    uiText(c,labelX,44,label,uiFont18,color);
   }
   uiText(c,410,42,channelOK[screen==2?2:1]?"实时":"断开",uiFont18,muted);
   c.drawFastHLine(24,57,432,0x3186);

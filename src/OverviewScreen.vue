@@ -6,6 +6,7 @@ const props = defineProps<{
   mode: string;
   status: string;
   batteryPercent: number | null;
+  batteryCharging: boolean;
 }>();
 const providers = computed(() => overviewProviders(props.data?.providers || []));
 const displayCount = (n: number | null | undefined) => n != null && n >= 100000 ? compact(n) : number(n);
@@ -35,8 +36,8 @@ const note = computed(() =>
   <section class="overview-screen merged-overview" aria-label="数据概览">
     <div class="usage-heading">
       <h2>今日概览</h2>
-      <span class="overview-battery" :class="{ low: batteryPercent != null && batteryPercent <= 10 }" :aria-label="batteryPercent == null ? '设备电量未知' : `设备电量 ${batteryPercent}%`" :title="batteryPercent == null ? '设备未连接、未安装电池或电量暂不可用' : '设备当前电量'">
-        <svg viewBox="0 0 31 18" aria-hidden="true"><rect x="1" y="1" width="26" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M28 6h3v6h-3z" fill="currentColor"/><rect v-if="batteryPercent != null" x="4" y="4" :width="20 * batteryPercent / 100" height="10" rx=".5" fill="currentColor"/></svg>
+      <span class="overview-battery" :class="{ low: batteryPercent != null && batteryPercent <= 10, charging: batteryCharging }" :aria-label="(batteryPercent == null ? '设备电量未知' : `设备电量 ${batteryPercent}%`) + (batteryCharging ? '，充电中' : '')" :title="batteryCharging ? '充电中' : batteryPercent == null ? '设备未连接、未安装电池或电量暂不可用' : '设备当前电量'">
+        <svg viewBox="0 0 31 18" aria-hidden="true"><rect x="1" y="1" width="26" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M28 6h3v6h-3z" fill="currentColor"/><path v-if="batteryCharging" d="M17 3 10 10h5l-3 5 8-8h-5z" fill="currentColor"/><rect v-else-if="batteryPercent != null" x="4" y="4" :width="20 * batteryPercent / 100" height="10" rx=".5" fill="currentColor"/></svg>
         <span>{{ batteryPercent == null ? '—' : batteryPercent }}%</span>
       </span>
       <span class="overview-mode">{{
