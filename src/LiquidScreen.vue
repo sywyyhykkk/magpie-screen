@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { liquidShape, Slosh } from './liquid';
 import codex from './assets/chatgpt.svg';
 import claude from './assets/claude.svg';
@@ -17,10 +17,10 @@ function draw(now: number) {
   if (!ctx) return;
   const dt = Math.min((now - (previous || now)) / 1000, 1 / 30);
   previous = now;
-  fluid.step(props.angle, props.viscosity, dt);
   fill += ((props.remaining ?? 0) / 100 - fill) * (1 - Math.exp(-3 * dt));
   if (props.remaining == null) fill = 0;
-  const { polygon, surface } = liquidShape(fluid.angle, fill, fluid.wave, fluid.ripple, fluid.heights);
+  fluid.step(props.angle, props.viscosity, fill, dt);
+  const { polygon, surface } = liquidShape(fluid.angle, fill, fluid.amp);
   ctx.clearRect(0, 0, 480, 480);
   ctx.save();
   ctx.translate(240, 240);
@@ -68,6 +68,10 @@ function draw(now: number) {
   ctx.restore();
   frame = requestAnimationFrame(draw);
 }
+// New quota lands as a drop in the middle of the surface.
+watch(() => props.remaining, (next, old) => {
+  if (fluid && next != null && old != null) fluid.splash(Math.max(-160, Math.min(320, (next - old) * 8)));
+});
 onMounted(() => {
   fluid = new Slosh(props.angle); fill = (props.remaining ?? 0) / 100;
   frame = requestAnimationFrame(draw);

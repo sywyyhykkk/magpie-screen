@@ -44,7 +44,24 @@ public:
   bool begin(int32_t = GFX_NOT_DEFINED) override {
     _framebuffer=(uint16_t*)heap_caps_malloc(480*480*2,MALLOC_CAP_SPIRAM);
     uiAlpha=(uint8_t*)heap_caps_malloc(480*480,MALLOC_CAP_SPIRAM);
-    return _framebuffer && uiAlpha;
+    if(!_framebuffer||!uiAlpha) return false;
+    std::fill(_framebuffer,_framebuffer+480*480,(uint16_t)0x0001);
+    memset(uiAlpha,255,480*480);
+    for(int r=0;r<480;r++) {uiLo[r]=480; uiHi[r]=0;}
+    return true;
+  }
+  // Record drawn spans; coordinates here are pre-rotation content space.
+  void writePixelPreclipped(int16_t x,int16_t y,uint16_t color) override {
+    uiMark(x,y,1,1); Arduino_Canvas::writePixelPreclipped(x,y,color);
+  }
+  void writeFastVLine(int16_t x,int16_t y,int16_t h,uint16_t color) override {
+    uiMark(x,h<0?y+h+1:y,1,abs(h)); Arduino_Canvas::writeFastVLine(x,y,h,color);
+  }
+  void writeFastHLine(int16_t x,int16_t y,int16_t w,uint16_t color) override {
+    uiMark(w<0?x+w+1:x,y,abs(w),1); Arduino_Canvas::writeFastHLine(x,y,w,color);
+  }
+  void writeFillRectPreclipped(int16_t x,int16_t y,int16_t w,int16_t h,uint16_t color) override {
+    uiMark(x,y,w,h); Arduino_Canvas::writeFillRectPreclipped(x,y,w,h,color);
   }
 };
 OverlayCanvas overlay;
@@ -96,16 +113,20 @@ XPowersAXP2101 pmu;
 Preferences prefs;
 WebServer web(80);
 liquid::Slosh fluid;
+liquid::Motion motion;
 DynamicJsonDocument data(24576);
 bool imuOK = false, pmuOK = false, orange = false, otaActive = false,
      otaFailed = false;
 float target = 0, fill = 0, viscosity = .45f, fps = 0;
 int screen = 1, rotation = 0;
 OrientationTransition orientation;
-uint32_t nextFrame = 0, lastFrame = 0, lastReport = 0, frames = 0,
-         lastState = 0, lastPmu = 0, lastMotion = 0;
+uint32_t nextFrame = 0, lastStep = 0, lastSample = 0, lastReport = 0,
+         frames = 0, lastState = 0, lastPmu = 0, lastMotion = 0;
+constexpr uint32_t kFrameUs = 16667; // 60 fps cap
+// Palette is indexed by depth below the surface in quarter pixels.
+constexpr int kPalette = 1800, kSurfaceIndex = 32;
 String key, ssid, password, line;
-uint16_t palette[1800];
+uint16_t palette[kPalette];
 bool prevBoot = false, prevKey = false;
 uint32_t keyTime = 0, bootTime = 0;
 struct Flight {
@@ -144,34 +165,45 @@ void updatePalette() {
     dirty = true;
   }
 }
+// Colour at depth d px below the surface (negative: above it).
+static void shade(float d, float rgb[3]) {
+  float r = orange?36:65, g = orange?33:65, b = orange?38:65;
+  if (d < 0) {
+    float glow = liquid::clamp(1 + d / 4, 0, 1);
+    r += glow * 55;
+    g += glow * 52;
+    b += glow * 45;
+  } else if (orange) {
+    float t = liquid::clamp(d / 430, 0, 1);
+    r = 249 - 121 * t;
+    g = 172 - 112 * t;
+    b = 112 - 75 * t;
+  } else {
+    float t = liquid::clamp(d / 150, 0, 1);
+    r = g = b = 105 - 90 * sqrtf(t);
+  }
+  if (d >= 0 && d < 2) {
+    r = 245;
+    g = 240;
+    b = orange ? 205 : 245;
+  } else if (d >= 2 && d < 12) {
+    r += 18;
+    g += 18;
+    b += 18;
+  }
+  rgb[0] = r; rgb[1] = g; rgb[2] = b;
+}
 void makePalette() {
-  for (int i = 0; i < 1800; i++) {
-    float d = i - 900, r = orange?36:65, g = orange?33:65, b = orange?38:65;
-    if (d < 0) {
-      float glow = liquid::clamp(1 + d / 4, 0, 1);
-      r += glow * 55;
-      g += glow * 52;
-      b += glow * 45;
-    } else if (orange) {
-      float t = liquid::clamp(d / 430, 0, 1);
-      r = 249 - 121 * t;
-      g = 172 - 112 * t;
-      b = 112 - 75 * t;
-    } else {
-      float t = liquid::clamp(d / 150, 0, 1);
-      r = g = b = 105 - 90 * sqrtf(t);
+  // Box-filter each quarter-pixel entry over one pixel: antialiased surface.
+  for (int i = 0; i < kPalette; i++) {
+    float sum[3] = {}, rgb[3];
+    for (int k = 0; k < 8; k++) {
+      shade((i - kSurfaceIndex) / 4.f + (k + .5f) / 8 - .5f, rgb);
+      for (int j = 0; j < 3; j++) sum[j] += rgb[j];
     }
-    if (d >= 0 && d < 2) {
-      r = 245;
-      g = 240;
-      b = orange ? 205 : 245;
-    } else if (d >= 2 && d < 12) {
-      r += 18;
-      g += 18;
-      b += 18;
-    }
-    palette[i] = display.color565(std::min(255, (int)r), std::min(255, (int)g),
-                                  std::min(255, (int)b));
+    palette[i] = display.color565(std::min(255, (int)(sum[0] / 8 + .5f)),
+                                  std::min(255, (int)(sum[1] / 8 + .5f)),
+                                  std::min(255, (int)(sum[2] / 8 + .5f)));
   }
 }
 void selectScreen(int n) {
@@ -616,8 +648,8 @@ void setup() {
   xTaskCreatePinnedToCore(transferTask, "display", 8192, nullptr, 2, nullptr,
                           0);
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-  lastFrame = micros();
-  nextFrame = lastFrame + 33333;
+  lastStep = lastSample = micros();
+  nextFrame = lastStep + kFrameUs;
   lastReport = millis();
   lastActivity = millis();
   pollJobs = xQueueCreate(1, sizeof(PollJob *));
@@ -628,6 +660,54 @@ void setup() {
     startSetup();
   serialStatus();
 }
+// Packed RGB565 lanes blend all channels with one multiply (5-bit alpha).
+static inline uint16_t blendFast(uint32_t fg, uint32_t bg, uint32_t a) {
+  fg = (fg | fg << 16) & 0x07e0f81f;
+  bg = (bg | bg << 16) & 0x07e0f81f;
+  bg += (fg - bg) * ((a + 4) >> 3) >> 5;
+  bg &= 0x07e0f81f;
+  return bg | bg >> 16;
+}
+// Accelerometer runs independently of rendering so the liquid sees shakes.
+void sampleMotion(uint32_t now) {
+  if (!imuOK || now - lastSample < (screenOff ? 33333u : 10000u))
+    return;
+  float dt = (now - lastSample) / 1000000.f, x, y, z;
+  lastSample = now;
+  if (!imu.getAccelerometer(x, y, z))
+    return;
+  static float bx = 0, by = 0, bz = 0;
+  static bool have = false;
+  float distance =
+      (x - bx) * (x - bx) + (y - by) * (y - by) + (z - bz) * (z - bz);
+  if (have && distance > .012f) {
+    userActivity();
+    lastMotion = millis();
+  }
+  if (!have || distance > .012f) {
+    bx = x;
+    by = y;
+    bz = z;
+    have = true;
+  }
+  motion.update(x, y, z, dt);
+  target = motion.target;
+}
+static int overlayRotation = -1;
+static int16_t uiTop = 0, uiBottom = 0, uiLeft = 0, uiRight = 0;
+void rebuildOverlay() {
+  uiClear(overlay.getFramebuffer());
+  uiRotation = rotation;
+  overlay.setRotation(rotation);
+  drawUI(overlay, 0);
+  overlayRotation = rotation;
+  uiTop = 480; uiBottom = 0; uiLeft = 480; uiRight = 0;
+  for (int r = 0; r < 480; r++)
+    if (uiLo[r] < uiHi[r]) {
+      uiTop = std::min<int>(uiTop, r); uiBottom = r + 1;
+      uiLeft = std::min(uiLeft, uiLo[r]); uiRight = std::max(uiRight, uiHi[r]);
+    }
+}
 void loop() {
   io();
   if(adapter.clearIdleRoute(data.as<JsonObject>(),millis())) {flights.clear();dirty=true;}
@@ -636,38 +716,7 @@ void loop() {
     return;
   }
   uint32_t now = micros();
-  if ((int32_t)(now - nextFrame) < 0) {
-    delay(1);
-    return;
-  }
-  nextFrame += 33333;
-  if ((int32_t)(now - nextFrame) > 33333)
-    nextFrame = now + 33333;
-  float dt = (now - lastFrame) / 1000000.f;
-  lastFrame = now;
-  if (imuOK && imu.getDataReady()) {
-    float x, y, z;
-    static float bx = 0, by = 0, bz = 0;
-    static bool have = false;
-    if (imu.getAccelerometer(x, y, z)) {
-      float distance =
-          (x - bx) * (x - bx) + (y - by) * (y - by) + (z - bz) * (z - bz);
-      if (have && distance > .012f) {
-        userActivity();
-        lastMotion = millis();
-      }
-      if (!have || distance > .012f) {
-        bx = x;
-        by = y;
-        bz = z;
-        have = true;
-      }
-      if (x * x + y * y > .035f) {
-        float delta = remainderf(atan2f(x, y) - target, 2 * liquid::kPi);
-        if(fabsf(delta) > .015f) target += delta * (1 - expf(-12 * dt));
-      }
-    }
-  }
+  sampleMotion(now);
   static float orientationAngle=0;
   static uint32_t settledAt=0;
   if(fabsf(remainderf(target-orientationAngle,2*liquid::kPi))>.035f) {
@@ -679,61 +728,81 @@ void loop() {
   }
   if (screenOff) {
     orientation.snap(rotation);
+    lastStep = now;
     delay(5);
     return;
   }
-  float remaining = std::min(dt, .1f);
-  while (remaining > 0) {
-    float h = std::min(remaining, 1.f / 60);
-    fluid.step(target, viscosity, h);
-    remaining -= h;
-  }
   bool known = !data["quota"]["remaining"].isNull();
   float wanted = known ? data["quota"]["remaining"].as<float>() / 100 : 0;
-  fill += (wanted - fill) * (1 - expf(-3 * dt));
-  if (!known)
-    fill = 0;
-  bool moving = fabsf(fill - wanted) > .0002f ||
-                fabsf(fluid.angle - target) > .001f ||
-                fabsf(fluid.velocity) > .003f || fabsf(fluid.wave) > .1f ||
-                fabsf(fluid.ripple) > .1f;
-  for (int i = 0; i < 65; i++)
-    moving =
-        moving || fabsf(fluid.heights[i]) > .1f || fabsf(fluid.speeds[i]) > .1f;
+  // Physics advances in ~4 ms chunks between frames, not once per frame.
+  if (now - lastStep >= 4000) {
+    float dt = std::min((now - lastStep) / 1000000.f, .1f);
+    lastStep = now;
+    fill += (wanted - fill) * (1 - expf(-3 * dt));
+    if (!known)
+      fill = 0;
+    fluid.step(motion, viscosity, fill, dt);
+  }
+  if ((int32_t)(now - nextFrame) < 0) {
+    delay(1);
+    return;
+  }
+  nextFrame += kFrameUs;
+  if ((int32_t)(now - nextFrame) > (int32_t)kFrameUs)
+    nextFrame = now + kFrameUs;
+  bool moving = fabsf(fill - wanted) > .0002f || !fluid.settled(target);
   bool turning=orientation.active(millis());
   float contentAngle=orientation.sample(millis());
+  bool flying = screen == 2 && !flights.empty();
   if (!dirty && !turning && !orientation.wasActive && !(screen == 1 && !setupMode && known && moving) &&
-      !(screen == 2 && !flights.empty()))
+      !flying)
     return;
   orientation.wasActive=turning;
+  // The UI layer is redrawn only when its content changes, not per liquid frame.
+  if (dirty || flying || overlayRotation != rotation)
+    rebuildOverlay();
   dirty = false;
-  overlay.fillScreen(0x0001);
-  memset(uiAlpha,255,480*480);
-  drawUI(overlay,0);
-  liquid::Shape shape(fluid, fill);
+  bool liquidVisible = screen == 1 && known && fill > .001f;
+  static liquid::Shape shape;
   static int32_t surface[2801];
-  if (screen == 1)
-    for (int i = 0; i <= 2800; i++)
-      surface[i] = (int32_t)(shape.surface(i * .25f - 350) * 65536);
+  int32_t surfaceTop = 0, surfaceBottom = 0;
+  if (liquidVisible) {
+    shape.update(fluid, fill);
+    shape.raster(surface, 2801, surfaceTop, surfaceBottom);
+  }
   int32_t dx = (int32_t)(shape.c * 65536), dy = (int32_t)(-shape.s * 65536);
-  int32_t contentCos=lroundf(cosf(contentAngle)*65536), contentSin=lroundf(sinf(contentAngle)*65536);
+  // During a turn the overlay (drawn at the final quarter) is resampled by the
+  // remaining angle, limited to the UI bounding box.
+  float delta = contentAngle - rotation * liquid::kPi / 2;
+  float deltaCos = cosf(delta), deltaSin = sinf(delta);
+  int32_t contentCos=lroundf(deltaCos*65536), contentSin=lroundf(deltaSin*65536);
+  const uint16_t air = palette[0], deep = palette[kPalette - 1];
+  const int32_t airLimit = -(kSurfaceIndex << 14),
+                deepLimit = (kPalette - 1 - kSurfaceIndex) << 14;
   transferUs = 0;
   for (int sy = 0; sy < 480; sy += H) {
     int index;
     xQueueReceive(freeBuffers, &index, portMAX_DELAY);
     auto &c = canvases[index];
     uint16_t *pixels = c.getFramebuffer();
-    if (screen == 1 && known && fill > .001f) {
+    if (liquidVisible) {
       for (int row = 0; row < H; row++) {
         float yy = sy + row - 239.5f;
         int32_t lx =
                     (int32_t)((-239.5f * shape.c + yy * shape.s + 350) * 65536),
                 ly = (int32_t)((239.5f * shape.s + yy * shape.c) * 65536);
         uint16_t *dest = pixels + row * 480;
+        int32_t lyEnd = ly + 479 * dy, lyMin = std::min(ly, lyEnd),
+                lyMax = std::max(ly, lyEnd);
+        if (lyMax - surfaceTop < airLimit || lyMin - surfaceBottom >= deepLimit) {
+          uint32_t pair = lyMax - surfaceTop < airLimit ? air * 0x10001u : deep * 0x10001u;
+          uint32_t *wide = (uint32_t *)dest;
+          for (int x = 0; x < 240; x++) wide[x] = pair;
+          continue;
+        }
         for (int x = 0; x < 480; x++) {
-          int u = lx >> 14;
-          int v = ((ly - surface[u]) >> 16) + 900;
-          *dest++ = palette[std::max(0, std::min(1799, v))];
+          int v = ((ly - surface[lx >> 14]) >> 14) + kSurfaceIndex;
+          *dest++ = palette[std::max(0, std::min(kPalette - 1, v))];
           lx += dx;
           ly += dy;
         }
@@ -744,17 +813,35 @@ void loop() {
     const uint16_t *ui=overlay.getFramebuffer();
     for(int row=0;row<H;row++) {
       int y=sy+row;
-      int32_t rx=lroundf(239.5f*65536-239.5f*contentCos+(y-239.5f)*contentSin);
-      int32_t ry=lroundf(239.5f*65536+239.5f*contentSin+(y-239.5f)*contentCos);
-      for(int x=0;x<480;x++,rx+=contentCos,ry-=contentSin) {
-        int ux=x,uy=y;
-        if(turning) {ux=(rx+32768)>>16;uy=(ry+32768)>>16;}
-        else if(rotation==1) {ux=y;uy=479-x;}
-        else if(rotation==2) {ux=479-x;uy=479-y;}
-        else if(rotation==3) {ux=479-y;uy=x;}
+      uint16_t *dest=pixels+row*480;
+      if(!turning) {
+        const uint16_t *src=ui+y*480; const uint8_t *alpha=uiAlpha+y*480;
+        for(int x=uiLo[y];x<uiHi[y];x++) {
+          uint16_t color=src[x];
+          if(color==0x0001) continue;
+          uint8_t a=alpha[x];
+          dest[x]=a==255?color:blendFast(color,dest[x],a);
+        }
+        continue;
+      }
+      if(uiTop>=uiBottom) continue;
+      float ux0=239.5f-239.5f*deltaCos+(y-239.5f)*deltaSin;
+      float uy0=239.5f+239.5f*deltaSin+(y-239.5f)*deltaCos;
+      float from=0,to=479;
+      auto limit=[&](float p,float step,float lo,float hi) {
+        if(fabsf(step)<1e-6f) { if(p<lo||p>hi) to=-1; return; }
+        float a=(lo-p)/step,b=(hi-p)/step;
+        from=std::max(from,std::min(a,b)); to=std::min(to,std::max(a,b));
+      };
+      limit(ux0,deltaCos,uiLeft-1,uiRight);
+      limit(uy0,-deltaSin,uiTop-1,uiBottom);
+      int x0=(int)ceilf(from), x1=(int)floorf(to);
+      int32_t rx=lroundf(ux0*65536)+x0*contentCos, ry=lroundf(uy0*65536)-x0*contentSin;
+      for(int x=x0;x<=x1;x++,rx+=contentCos,ry-=contentSin) {
+        int ux=(rx+32768)>>16,uy=(ry+32768)>>16;
         if(ux<0||ux>=480||uy<0||uy>=480)continue;
-        int source=uy*480+ux, dest=row*480+x;
-        if(ui[source]!=0x0001) pixels[dest]=blend565(ui[source],pixels[dest],uiAlpha[source]);
+        int source=uy*480+ux;
+        if(ui[source]!=0x0001) dest[x]=blendFast(ui[source],dest[x],uiAlpha[source]);
       }
     }
     if(screen==1&&!setupMode) for(int i=1;i<10;i++) c.drawFastHLine(458,48*i-sy,i%2?7:12,0x7bef);
@@ -771,7 +858,6 @@ void loop() {
     dirty = true;
   frames++;
   totalFrames++;
-  uint32_t ms = millis();
 }
 
 void userActivity() {
@@ -781,8 +867,7 @@ void userActivity() {
     requestedOff = false;
     dirty = true;
     flights.clear();
-    fluid = liquid::Slosh();
-    fluid.angle = fluid.lastTarget = target;
+    fluid.reset(target);
     fill = data["quota"]["remaining"].isNull()
                ? 0
                : data["quota"]["remaining"].as<float>() / 100;
@@ -883,8 +968,8 @@ void networkIO() {
           if (!base || screenOff)
             fill = isfinite(next) ? next / 100 : 0;
           if (changed && !screenOff && isfinite(next)) {
-            fluid.waveVelocity +=
-                isfinite(old) ? liquid::clamp((next - old) * 3, -35, 70) : 0;
+            if (isfinite(old))
+              fluid.splash(liquid::clamp((next - old) * 8, -160, 320));
             quotaNotice = adapter.notice.length()       ? adapter.notice
                           : isfinite(old) && next > old ? "QUOTA RESTORED"
                           : next < old                  ? "QUOTA UPDATED"

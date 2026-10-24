@@ -3,6 +3,30 @@
 // Text and icons keep coverage until composited over the actual liquid pixel.
 static uint8_t *uiAlpha;
 static uint16_t blend565(uint16_t fg,uint16_t bg,int a);
+// The overlay is stored in display orientation (content rotated by uiRotation
+// quarters, as Arduino_Canvas does) with per-row spans of drawn pixels, so the
+// per-frame composite reads only rows that contain UI, sequentially.
+static int uiRotation=0;
+static int16_t uiLo[480], uiHi[480];
+static void uiMark(int x,int y,int w,int h) {
+  int x0=std::max(0,x), y0=std::max(0,y), x1=std::min(480,x+w), y1=std::min(480,y+h);
+  if(x0>=x1||y0>=y1) return;
+  int ax=x0,bx=x1,ay=y0,by=y1;
+  if(uiRotation==1) {ax=480-y1;bx=480-y0;ay=x0;by=x1;}
+  else if(uiRotation==2) {ax=480-x1;bx=480-x0;ay=480-y1;by=480-y0;}
+  else if(uiRotation==3) {ax=y0;bx=y1;ay=480-x1;by=480-x0;}
+  for(int r=ay;r<by;r++) { if(ax<uiLo[r]) uiLo[r]=ax; if(bx>uiHi[r]) uiHi[r]=bx; }
+}
+// Erases only what the previous UI drew; untouched pixels stay transparent.
+static void uiClear(uint16_t *fb) {
+  for(int r=0;r<480;r++) {
+    if(uiLo[r]<uiHi[r]) {
+      std::fill(fb+r*480+uiLo[r],fb+r*480+uiHi[r],(uint16_t)0x0001);
+      memset(uiAlpha+r*480+uiLo[r],255,uiHi[r]-uiLo[r]);
+    }
+    uiLo[r]=480; uiHi[r]=0;
+  }
+}
 static uint32_t nextCode(const char *&p) {
   uint32_t c = (uint8_t)*p++;
   if (c < 128) return c;
@@ -22,7 +46,13 @@ static int textWidth(const String &s, const UiFont &f) {
 }
 static void uiPixel(Arduino_Canvas &c,int x,int y,uint16_t color,uint8_t a) {
   if(x<0||x>=480||y<0||y>=480||!a) return;
-  int i=y*480+x;
+  int col=x,row=y;
+  if(uiRotation==1) {col=479-y;row=x;}
+  else if(uiRotation==2) {col=479-x;row=479-y;}
+  else if(uiRotation==3) {col=y;row=479-x;}
+  if(col<uiLo[row]) uiLo[row]=col;
+  if(col>=uiHi[row]) uiHi[row]=col+1;
+  int i=row*480+col;
   uint16_t old=c.getFramebuffer()[i];
   if(old!=0x0001) {
     int coverage=a+(uiAlpha[i]*(255-a)+127)/255;
