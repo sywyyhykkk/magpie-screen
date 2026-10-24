@@ -289,8 +289,8 @@ struct Shape {
     int active = std::min(kModes, std::max(1, (int)(width / 7)));
     // Small meniscus where the surface meets the walls.
     float meniscus = 3.5f * clamp(width / 120, 0, 1), reach = 9;
-    lowest = 1e9f;
-    highest = -1e9f;
+    lowest = -1e9f;
+    highest = 1e9f;
     for (int i = 0; i < kGrid; ++i) {
       float t = cosines[i], prev = 1, cur = t, sum = 0;
       for (int n = 0; n < active; ++n) {

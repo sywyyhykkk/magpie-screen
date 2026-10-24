@@ -37,6 +37,12 @@ int main() {
       float target = fill * 230400;
       assert(fabsf(s.area(s.level) - target) < 1);
       assert(fabsf(referenceArea(s) / 230400 - fill) < .002f);
+      // Raster bounds bracket every surface sample (row fast paths rely on it).
+      int32_t heights[2801], top, bottom;
+      s.raster(heights, 2801, top, bottom);
+      for (int32_t h : heights)
+        assert(h >= top && h <= bottom);
+      assert(bottom - top < 200 * 65536);
       auto sec = liquid::flatSection(angle, fill);
       for (float x : {sec.left, sec.right}) {
         auto p = s.rotate(x, sec.level);
