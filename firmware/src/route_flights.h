@@ -3,7 +3,7 @@
 
 namespace route_flights {
 constexpr uint32_t duration = 850;
-constexpr uint32_t hubPause = 200;
+constexpr uint32_t hubPause = 500;
 
 template <typename Kind> uint32_t lifetime(const Kind &kind) {
   return duration + ((kind == "request" || kind == "response") ? hubPause : 0);

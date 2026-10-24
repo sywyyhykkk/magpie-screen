@@ -842,6 +842,22 @@ footer {
   height: 25px;
   width: 29px;
 }
+.trace-bird.arriving {
+  animation-name: trace-arrival;
+}
+@keyframes trace-arrival {
+  0% {
+    offset-distance: 0%;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    offset-distance: 100%;
+    opacity: 1;
+  }
+}
 .more-targets {
   position: absolute;
   bottom: -14px;

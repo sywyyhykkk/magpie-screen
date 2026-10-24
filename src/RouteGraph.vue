@@ -53,6 +53,7 @@ interface PlayingEvent {
   path: string;
   delay: number;
   duration: number;
+  hold: number;
   start: number;
 }
 const playing = ref<PlayingEvent[]>([]);
@@ -77,7 +78,7 @@ watch(
         p.event.key.split(":")[0],
         Math.max(
           endByRequest.get(p.event.key.split(":")[0]) || now,
-          p.start + p.duration,
+          p.start + p.duration + p.hold,
         ),
       );
     for (const event of batch.slice(0, 32)) {
@@ -90,14 +91,15 @@ watch(
       const request = event.key.split(":")[0];
       const start = Math.max(now, endByRequest.get(request) || now);
       const duration = Math.round((props.speed ?? 2.4) * 400);
-      endByRequest.set(request, start + duration);
+      const hold = event.kind === "request" || event.kind === "response" ? 500 : 0;
+      endByRequest.set(request, start + duration + hold);
       let path =
         event.kind === "request"
           ? `M84 ${mid.value}H146`
           : event.kind === "result"
             ? `M146 ${mid.value}H84`
             : pathFor(event.target, event.kind === "response");
-      playing.value.push({ event, path, delay: start - now, start, duration });
+      playing.value.push({ event, path, delay: start - now, start, duration, hold });
       timers.set(
         event.key,
         setTimeout(
@@ -107,7 +109,7 @@ watch(
             );
             timers.delete(event.key);
           },
-          start - now + duration + 50,
+          start - now + duration + (hold || 50),
         ),
       );
     }
@@ -200,6 +202,7 @@ const state = (t: ScreenTarget) =>
       class="trace-bird"
       :class="{
         failed: p.event.failed,
+        arriving: p.hold > 0,
         returning: p.event.kind === 'response' || p.event.kind === 'result',
       }"
       :style="birdStyle(p)"
