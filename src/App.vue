@@ -56,6 +56,31 @@ const mode = ref("sim"),
   error = ref(""),
   scale = ref(100),
   speed = ref(2.4);
+const batteryPercent = ref<number | null>(null);
+watch(view, (current, _, onCleanup) => {
+  batteryPercent.value = null;
+  if (current !== "overview") return;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => { controller.abort(); clearTimeout(timer); });
+  async function readBattery() {
+    try {
+      const response = await fetch("/api/device", { signal: controller.signal, cache: "no-store" });
+      if (!response.ok) throw Error("设备状态不可用");
+      const device = await response.json();
+      if (controller.signal.aborted) return;
+      const percent = device.status?.batteryPercent;
+      batteryPercent.value = device.connected && device.status?.battery === true
+        && typeof percent === "number" && Number.isFinite(percent) && percent >= 0 && percent <= 100
+        ? Math.round(percent) : null;
+    } catch {
+      if (controller.signal.aborted) return;
+      batteryPercent.value = null;
+    }
+    timer = setTimeout(readBattery, 2000);
+  }
+  void readBattery();
+});
 const rotation = ref(0), autoUpright = ref(true), remaining = ref(80), viscosity = ref(.65), liquidProvider = ref("codex");
 const quotaMode = ref("live");
 const quota = useQuotas(computed(() => view.value === "liquid" && quotaMode.value === "live"));
@@ -453,6 +478,7 @@ function reconnect() {
                 :provider="displayProvider"
                 :usage="usageData"
                 :usage-status="displayedUsageStatus"
+                :battery-percent="batteryPercent"
                 :speed="speed"
                 :mode="mode"
                 :view="view"
@@ -544,7 +570,7 @@ function reconnect() {
           </button>
         </div>
         <template v-if="mode === 'sim'"
-          ><div class="notice">模拟模式 · 所有画面数据均为演示</div>
+          ><div class="notice">模拟模式 · 业务数据为演示，电量读取实机</div>
           <label class="field-label">场景</label>
           <div class="scenarios">
             <button

@@ -64,7 +64,8 @@ export async function createDevice(root) {
   }
   const host = () => config.deviceHost || (status.ip && status.ip !== '0.0.0.0' ? status.ip : 'magpie-screen.local');
   async function wifi(message) {
-    const r = await fetch(`http://${host()}/command`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Magpie-Key': token }, body: JSON.stringify(message), signal: AbortSignal.timeout(3000), redirect: 'error' });
+    // Initial .local discovery can take about five seconds; later calls use the reported IP.
+    const r = await fetch(`http://${host()}/command`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Magpie-Key': token }, body: JSON.stringify(message), signal: AbortSignal.timeout(8000), redirect: 'error' });
     if (!r.ok) throw Error('Wi-Fi 设备未确认配置');
     const m = await r.json();
     if (!m.ok) throw Error(m.error || '设备拒绝命令');

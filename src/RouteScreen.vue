@@ -18,6 +18,7 @@ defineProps<{
   connected: string;
   usage: UsageData | null;
   usageStatus: string;
+  batteryPercent: number | null;
 }>();
 </script>
 <template>
@@ -38,7 +39,7 @@ defineProps<{
     </div>
     <LiquidScreen v-else-if="view === 'liquid'" :angle="angle" :upright="upright" :remaining="remaining" :caption="quotaCaption" :viscosity="viscosity" :provider="provider" />
     <div v-else class="orientation-layer" :style="{ transform: `rotate(${upright}deg)` }">
-      <OverviewScreen :data="usage" :status="usageStatus" :mode="mode" />
+      <OverviewScreen :data="usage" :status="usageStatus" :mode="mode" :battery-percent="batteryPercent" />
     </div>
       </div>
     </Transition>
