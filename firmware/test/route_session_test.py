@@ -39,17 +39,21 @@ String urlEncode(const String &s){return s;}
 String jsonText(JsonVariantConst v){std::string s;serializeJson(v,s);return s;}
 int routeFetches=0;
 uint64_t requestId=1792755369386ULL;
+String routeModel="codex/gpt-test", usageModel="gpt-test";
+bool requestDone=true, retried=false;
 bool fetchMagpie(const PollJob &,const String &path,JsonDocument &body,JsonDocument &filter,int &code,String &error){
   DynamicJsonDocument fixture(4096);
   if(path.find("usage/requests")!=std::string::npos){
     auto rows=fixture.createNestedArray("rows");
     auto bg=rows.createNestedObject();bg["session"]="background";bg["route_id"]=requestId+1;bg["kind"]="title";
-    auto row=rows.createNestedObject();row["session"]="normal";row["route_id"]=requestId;row["provider"]="codex";row["providerAccount"]="sample@example.test";
+    auto row=rows.createNestedObject();row["session"]="normal";row["route_id"]=requestId;row["provider"]="codex";row["model"]=usageModel;row["providerAccount"]="sample@example.test";
   }else{
     routeFetches++;
     fixture["seq"]=23;
-    auto r=fixture.createNestedObject("route");r["id"]=requestId;r["agent"]="codex";r["done"]=true;r["status"]=200;
-    auto t=r["tries"].createNestedObject();t["model"]="codex/gpt-test";t["done"]=true;t["status"]=200;
+    auto r=fixture.createNestedObject("route");r["id"]=requestId;r["agent"]="codex";r["done"]=requestDone;r["status"]=200;
+    auto tries=r.createNestedArray("tries");
+    if(retried){auto t=tries.createNestedObject();t["model"]="claude/earlier-model";t["done"]=true;t["status"]=503;}
+    auto t=tries.createNestedObject();t["model"]=routeModel;t["done"]=requestDone;t["status"]=200;
   }
   std::string raw;serializeJson(fixture,raw);
   auto e=deserializeJson(body,raw,DeserializationOption::Filter(filter));assert(!e);
@@ -84,6 +88,26 @@ int main(){
   job.showIdentity=false;cfg.showIdentity=false;poller=SessionPoller();
   assert(poller.read(job,result));adapter.trace(result.body.as<JsonObjectConst>(),cfg,out.to<JsonObject>());
   assert(out["route"]["targets"][0]["account"].isNull());
+  // Real Magpie routes use openai/model while usage identifies the codex provider.
+  routeModel="openai/gpt-test";retried=true;
+  job.showIdentity=true;cfg.showIdentity=true;
+  SessionPoller aliasPoller;Adapter aliasAdapter;DynamicJsonDocument aliasOut(24576);
+  assert(aliasPoller.read(job,result));
+  aliasAdapter.trace(result.body.as<JsonObjectConst>(),cfg,aliasOut.to<JsonObject>());
+  assert(aliasOut["route"]["targets"][0]["account"].isNull());
+  assert(aliasOut["route"]["targets"][1]["account"].as<std::string>()=="sample@example.test");
+  // Provider aliases must not attach usage from a different final model.
+  usageModel="different-model";aliasPoller=SessionPoller();
+  assert(aliasPoller.read(job,result));
+  aliasAdapter.trace(result.body.as<JsonObjectConst>(),cfg,aliasOut.to<JsonObject>());
+  assert(aliasOut["route"]["targets"][1]["account"].isNull());
+  // Even with matching identity data, unfinished requests remain anonymous.
+  usageModel="gpt-test";requestDone=false;aliasPoller=SessionPoller();
+  assert(aliasPoller.read(job,result));
+  aliasAdapter.trace(result.body.as<JsonObjectConst>(),cfg,aliasOut.to<JsonObject>());
+  assert(aliasOut["route"]["targets"][1]["account"].isNull());
+  routeModel="codex/gpt-test";requestDone=true;retried=false;
+  job.showIdentity=false;cfg.showIdentity=false;
   clockMs+=9999;
   assert(!adapter.clearIdleRoute(out.as<JsonObject>(),clockMs));
   clockMs++;

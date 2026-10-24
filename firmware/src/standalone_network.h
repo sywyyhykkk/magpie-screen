@@ -88,15 +88,18 @@ inline String urlEncode(const String &s) {
   return out;
 }
 struct SessionPoller {
+  struct UsageAccount {
+    String provider, model, name;
+  };
   std::vector<String> sessions;
   std::map<String,uint32_t> observed;
-  std::map<String,String> accountByRequest;
+  std::map<String,UsageAccount> accountByRequest;
   uint32_t discovered=0, generation=1, sequence=0;
   bool read(const PollJob &job, PollResult &result) {
     if(!discovered || millis()-discovered>=10000) {
       StaticJsonDocument<512> filter;auto row=filter["rows"].createNestedObject();
       row["session"]=true;row["kind"]=true;row["route_id"]=true;
-      if(job.showIdentity){row["providerAccount"]=true;row["provider"]=true;}
+      if(job.showIdentity){row["providerAccount"]=true;row["provider"]=true;row["model"]=true;}
       NetworkDocument discovery(65536);
       if(!fetchMagpie(job,"/v1/magpie/usage/requests?period=today&limit=100",discovery,filter,result.code,result.error))return false;
       if(!discovery["rows"].is<JsonArray>()){result.error="Unexpected session list";return false;}
@@ -105,7 +108,8 @@ struct SessionPoller {
       for(JsonObject r:discovery["rows"].as<JsonArray>()) {
         String id=r["session"] | "";
         if(id.isEmpty()||id.length()>128 || !(r["route_id"] | uint64_t(0)) || (!job.background && strlen(r["kind"] | "")))continue;
-        if(job.showIdentity) accountByRequest[id+":"+jsonText(r["route_id"])+":"+String(r["provider"]|"")]=String(r["providerAccount"]|"");
+        if(job.showIdentity) accountByRequest[id+":"+jsonText(r["route_id"])]=
+          {String(r["provider"]|""),String(r["model"]|""),String(r["providerAccount"]|"")};
         if(std::find(next.begin(),next.end(),id)==next.end())next.push_back(id);
         if(next.size()==4)break;
       }
@@ -142,8 +146,13 @@ struct SessionPoller {
         auto seat=order.createNestedObject();seat["id"]=full;seat["provider"]=provider;seat["model"]=model;
         // Usage identifies only the final attempt of this exact completed request.
         if(job.showIdentity && dest["done"]==true && ++attempt==(int)dest["tries"].size()) {
-          auto found=accountByRequest.find(session+":"+jsonText(dest["id"])+":"+provider);
-          if(found!=accountByRequest.end()) seat["who"]=found->second;
+          auto found=accountByRequest.find(session+":"+jsonText(dest["id"]));
+          if(found!=accountByRequest.end()) {
+            const auto &account=found->second;
+            // Route prefixes can be API aliases (openai) for usage providers (codex).
+            if(account.provider==provider || (account.model.length() &&
+               (account.model==model || account.model==full))) seat["who"]=account.name;
+          }
         }
         dest["provider"]=provider;
       }
