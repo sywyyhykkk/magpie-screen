@@ -120,6 +120,9 @@ export class Slosh {
     const turn = clamp(accel, -400, 400) * (1 - .6 * viscosity), lever = HALF / 2 - sec.level,
       spin2 = Math.min(spin * spin, 400), tilt = (turn * lever - spin2 * mid) / g * width,
       dish = -spin2 / (2 * g) * width * width;
+    // When gravity swings faster than the bulk follows, the shorter waves
+    // already lean towards the new level; thick liquid resists.
+    const lean = Math.tan(clamp(target - this.angle, -.6, .6)) * width * (1 - .5 * viscosity);
     const omega2 = new Float64Array(MODES), decay = new Float64Array(MODES), equilibrium = new Float64Array(MODES), limit = new Float64Array(MODES);
     const active = Math.min(MODES, Math.max(1, Math.floor(width / 7)));
     const steps = Math.max(1, Math.ceil(dt / STEP - 1e-4)), h = dt / steps, wallWidth = .05;
@@ -130,7 +133,7 @@ export class Slosh {
       if (n > active) damp += 60;
       decay[n - 1] = Math.exp(-damp * h);
       const shape = 4 / (n * n * Math.PI * Math.PI);
-      equilibrium[n - 1] = n & 1 ? -tilt * shape : dish * shape;
+      equilibrium[n - 1] = n & 1 ? -(tilt + (n > 1 ? lean : 0)) * shape : dish * shape;
       limit[n - 1] = .32 / k; // steepness above this breaks
       // Turning jerks push one wall up and pull the other down.
       const kw = n * Math.PI * wallWidth;

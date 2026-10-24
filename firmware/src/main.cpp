@@ -115,7 +115,7 @@ WebServer web(80);
 liquid::Slosh fluid;
 liquid::Motion motion;
 DynamicJsonDocument data(24576);
-bool imuOK = false, pmuOK = false, orange = false, otaActive = false,
+bool imuOK = false, gyroOK = false, pmuOK = false, orange = false, otaActive = false,
      otaFailed = false;
 float target = 0, fill = 0, viscosity = .45f, fps = 0;
 int screen = 1, rotation = 0;
@@ -616,6 +616,10 @@ void setup() {
                             SensorQMI8658::ACC_ODR_1000Hz,
                             SensorQMI8658::LPF_MODE_0);
     imu.enableAccelerometer();
+    // The gyroscope tells real turns apart from shakes; 1024 dps covers flicks.
+    gyroOK = imu.configGyroscope(SensorQMI8658::GYR_RANGE_1024DPS,
+                                 SensorQMI8658::GYR_ODR_896_8Hz,
+                                 SensorQMI8658::LPF_MODE_0) == 0;
   }
   touch.setPins(40, 11);
   touchOK = touch.begin(Wire, CST92XX_SLAVE_ADDRESS, 15, 14);
@@ -676,6 +680,12 @@ void sampleMotion(uint32_t now) {
   lastSample = now;
   if (!imu.getAccelerometer(x, y, z))
     return;
+  // Gyroscope only runs while the liquid is on screen, to save power.
+  if (gyroOK && screenOff == imu.isEnableGyroscope())
+    screenOff ? imu.disableGyroscope() : imu.enableGyroscope();
+  float gx, gy, gz, rate = NAN;
+  if (gyroOK && !screenOff && imu.getGyroscope(gx, gy, gz))
+    rate = gz * liquid::kPi / 180;
   static float bx = 0, by = 0, bz = 0;
   static bool have = false;
   float distance =
@@ -690,7 +700,7 @@ void sampleMotion(uint32_t now) {
     bz = z;
     have = true;
   }
-  motion.update(x, y, z, dt);
+  motion.update(x, y, z, dt, rate);
   target = motion.target;
 }
 static int overlayRotation = -1;

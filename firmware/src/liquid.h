@@ -81,26 +81,31 @@ inline Section flatSection(float angle, float fill) {
   return out;
 }
 // Smoothed effective gravity from the accelerometer (in g). Specific force is
-// what the liquid feels, so lateral shakes deliberately pass through.
+// what the liquid feels, so lateral shakes deliberately pass through. Shakes
+// swing gravity without turning the board, so rotational effects use `turning`:
+// the gravity swing rate limited by the gyroscope's measured rotation rate.
 struct Motion {
-  float target = 0, spin = 0, accel = 0, gravity = 1, trend = 0;
+  float target = 0, spin = 0, turning = 0, accel = 0, gravity = 1, trend = 0,
+        gyro = 0;
   bool holding = false, primed = false;
   static float alpha(float dt, float hz) {
     return 1 / (1 + 1 / (2 * kPi * hz * dt));
   }
   void reset(float angle) {
     target = angle;
-    spin = accel = trend = 0;
+    spin = turning = accel = trend = gyro = 0;
     primed = true;
   }
-  void update(float x, float y, float z, float dt) {
+  // `rate` is the rotation rate about the screen normal (rad/s), or NAN when no
+  // gyroscope is available, in which case every gravity swing counts as a turn.
+  void update(float x, float y, float z, float dt, float rate = NAN) {
     (void)z;
     dt = clamp(dt, .001f, .1f);
     float planar = sqrtf(x * x + y * y);
     // Lying flat leaves no in-plane gravity; hold the last direction.
     holding = holding ? planar < .22f : planar < .17f;
     gravity += (clamp(planar, .25f, 2.5f) - gravity) * alpha(dt, 8);
-    float last = target, lastSpin = spin;
+    float last = target, lastTurning = turning;
     if (!holding) {
       if (!primed) {
         reset(atan2f(x, y));
@@ -114,7 +119,14 @@ struct Motion {
         target += (raw - target) * alpha(dt, 1.2f + 1.8f * fabsf(trend));
     }
     spin += ((target - last) / dt - spin) * alpha(dt, 10);
-    accel += (clamp((spin - lastSpin) / dt, -400, 400) - accel) * alpha(dt, 8);
+    if (std::isnan(rate))
+      turning = spin;
+    else {
+      gyro += (fabsf(rate) - gyro) * alpha(dt, 10);
+      turning = clamp(spin, -gyro, gyro);
+    }
+    accel += (clamp((turning - lastTurning) / dt, -400, 400) - accel) *
+             alpha(dt, 8);
   }
 };
 struct Slosh {
@@ -160,6 +172,10 @@ struct Slosh {
           spin2 = std::min(spin * spin, 400.f),
           tilt = (turn * lever - spin2 * mid) / g * width,
           dish = -spin2 / (2 * g) * width * width;
+    // When gravity swings faster than the bulk follows (shaking), the shorter
+    // waves already lean towards the new level; thick liquid resists.
+    float lean = tanf(clamp(target - angle, -.6f, .6f)) * width *
+                 (1 - .5f * viscosity);
     float jolt = dt > 0 ? clamp((gravity - lastGravity) / dt, -40, 40) : 0;
     lastGravity = gravity;
     float omega2[kModes], damp[kModes], equilibrium[kModes], limit[kModes];
@@ -172,7 +188,8 @@ struct Slosh {
       damp[n - 1] = friction + 2 * nu * k * k +
                     .05f * sqrtf(nu * sqrtf(omega2[n - 1]));
       float shape = 4 / (n * n * kPi * kPi);
-      equilibrium[n - 1] = n & 1 ? -tilt * shape : dish * shape;
+      equilibrium[n - 1] =
+          n & 1 ? -(tilt + (n > 1 ? lean : 0)) * shape : dish * shape;
       limit[n - 1] = .32f / k; // steepness above this breaks
       if (n > active)
         damp[n - 1] += 60;
@@ -207,7 +224,7 @@ struct Slosh {
     }
   }
   void step(const Motion &m, float viscosity, float fill, float dt) {
-    step(m.target, m.spin, m.accel, m.gravity, viscosity, fill, dt);
+    step(m.target, m.turning, m.accel, m.gravity, viscosity, fill, dt);
   }
   bool settled(float target) const {
     if (fabsf(target - angle) > .002f || fabsf(velocity) > .006f)

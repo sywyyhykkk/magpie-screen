@@ -26,6 +26,22 @@ static float settleTime(float viscosity) {
   }
   return 1e9f;
 }
+// Peak surface displacement while shaking the upright board sideways at 3 Hz.
+static float shakePeak(float viscosity, liquid::Motion &m) {
+  m = liquid::Motion();
+  liquid::Slosh f;
+  float peak = 0, worst = 0;
+  for (int i = 0; i < 300; ++i) {
+    float ax = sinf(2 * liquid::kPi * 3 * i * .01f);
+    m.update(ax, 1, 0, .01f, 0);
+    f.step(m, viscosity, .5f, .01f);
+    worst = std::max(worst, fabsf(m.turning));
+    liquid::Shape s(f, .5f);
+    peak = std::max(peak, std::max(fabsf(s.lowest), fabsf(s.highest)));
+  }
+  m.turning = worst;
+  return peak;
+}
 int main() {
   liquid::Slosh f;
   for (int n = 0; n < liquid::kModes; ++n)
@@ -90,7 +106,19 @@ int main() {
   for (int i = 0; i < 100; ++i)
     turn.update(.05f, -.05f, 1, 1.f / 100);
   assert(turn.holding && fabsf(turn.target - held) < .01f);
-  printf("Liquid: volume, chord, shaking, splash, settling (%.1fs/%.1fs/%.1fs) "
-         "and gravity filter passed\n",
-         thin, medium, thick);
+  // A real turn measured by the gyroscope keeps its rotational effects.
+  liquid::Motion gyroTurn;
+  for (int i = 0; i < 300; ++i) {
+    float a = i * .01f;
+    gyroTurn.update(sinf(a), cosf(a), 0, 1.f / 100, 1);
+  }
+  assert(fabsf(gyroTurn.turning - 1) < .05f);
+  // Shaking sideways swings gravity without turning the board: waves stay
+  // well below the screen size and thick liquid stays calmer than water.
+  float water = shakePeak(0, turn), honey = shakePeak(1, turn);
+  assert(fabsf(turn.turning) < .05f && fabsf(turn.accel) < 1);
+  assert(water > 10 && water < 80 && honey < water * .6f);
+  printf("Liquid: volume, chord, shaking, splash, settling (%.1fs/%.1fs/%.1fs), "
+         "gravity filter and sideways shake (%.0fpx/%.0fpx) passed\n",
+         thin, medium, thick, water, honey);
 }
