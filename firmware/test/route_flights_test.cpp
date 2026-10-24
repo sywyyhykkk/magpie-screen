@@ -6,14 +6,16 @@
 struct Flight {
   std::string request;
   uint32_t start;
+  std::string kind;
 };
 
 int main() {
   using namespace route_flights;
   std::vector<Flight> flights;
-  auto enqueue = [&](const std::string &request, uint32_t now) {
+  auto enqueue = [&](const std::string &request, uint32_t now,
+                     const std::string &kind = "attempt") {
     auto start = nextStart(flights, request, now);
-    flights.push_back({request, start});
+    flights.push_back({request, start, kind});
     return start;
   };
   // A complete request arriving in one poll: left -> middle -> right,
@@ -45,4 +47,28 @@ int main() {
   assert(finished(next, now));
   assert(active(next, next));
   assert(enqueue("1:100", next) == next + duration);
+
+  // Both directions pause visibly at the hub before the following leg starts.
+  for (const std::string arrival : {"request", "response"}) {
+    flights.clear();
+    const uint32_t start = UINT32_MAX - 400;
+    assert(enqueue("1:100", start, arrival) == start);
+    const uint32_t departure = start + duration + hubPause;
+    assert(enqueue("1:100", start, arrival == "request" ? "attempt" : "result") == departure);
+    for (uint32_t ms = duration; ms < duration + hubPause; ++ms) {
+      const uint32_t now = start + ms;
+      assert(active(now, start, lifetime(arrival)));
+      assert(!finished(now, start, lifetime(arrival)));
+      assert(progress(now, start) == 1.f);
+      assert(!active(now, departure));
+    }
+    assert(finished(departure, start, lifetime(arrival)));
+    assert(active(departure, departure));
+    assert(progress(departure, departure) == 0.f);
+    assert(enqueue("1:101", start + duration) == start + duration);
+  }
+  // A departure received during the hold still waits for its remaining time.
+  flights.clear();
+  enqueue("1:100", 1000, "request");
+  assert(enqueue("1:100", 1000 + duration + 50) == 1000 + duration + hubPause);
 }

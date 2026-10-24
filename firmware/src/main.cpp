@@ -533,8 +533,8 @@ void drawUI(Arduino_Canvas &c,int) {
     if(!i) { c.drawFastHLine(222,240,48,0x52aa); centered(c,360,248,"等待请求",uiFont22,muted); }
     for(auto &f:flights) {
       const uint32_t now = millis();
-      if (!route_flights::active(now, f.start)) continue;
-      float t=route_flights::elapsed(now,f.start)/float(route_flights::duration); int x1=84,x2=146,y2=240;
+      if (!route_flights::active(now, f.start, route_flights::lifetime(f.kind))) continue;
+      float t=route_flights::progress(now,f.start); int x1=84,x2=146,y2=240;
       if(f.kind=="attempt"||f.kind=="response") {
         x1=222; x2=270; int index=0;
         for(JsonObject a:targets) { if(f.target==(a["key"]|"")) break; index++; }
@@ -862,7 +862,7 @@ void loop() {
   size_t flightCount = flights.size();
   flights.erase(
       std::remove_if(flights.begin(), flights.end(),
-                     [](const Flight &f) { return route_flights::finished(millis(), f.start); }),
+                     [](const Flight &f) { return route_flights::finished(millis(), f.start, route_flights::lifetime(f.kind)); }),
       flights.end());
   if (flightCount != flights.size())
     dirty = true;
