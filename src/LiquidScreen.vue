@@ -12,6 +12,8 @@ const isCodex = computed(() => ['codex', 'chatgpt', 'openai'].includes(props.pro
 const name = computed(() => isClaude.value ? 'CLAUDE' : isCodex.value ? 'CODEX' : props.provider ? providerName(props.provider).toUpperCase() : 'MAGPIE');
 let frame = 0, previous = 0, fluid: Slosh;
 let fill = 0;
+// Leave 5px of headroom at full quota; keep the physics and volume solver intact.
+const MAX_FILL = (480 - 5) / 480;
 function draw(now: number) {
   const ctx = canvas.value?.getContext('2d');
   if (!ctx) return;
@@ -19,8 +21,9 @@ function draw(now: number) {
   previous = now;
   fill += ((props.remaining ?? 0) / 100 - fill) * (1 - Math.exp(-3 * dt));
   if (props.remaining == null) fill = 0;
-  fluid.step(props.angle, props.viscosity, fill, dt);
-  const { polygon, surface } = liquidShape(fluid.angle, fill, fluid.amp);
+  const displayFill = fill * MAX_FILL;
+  fluid.step(props.angle, props.viscosity, displayFill, dt);
+  const { polygon, surface } = liquidShape(fluid.angle, displayFill, fluid.amp);
   ctx.clearRect(0, 0, 480, 480);
   ctx.save();
   ctx.translate(240, 240);
@@ -43,7 +46,7 @@ function draw(now: number) {
     glow.addColorStop(0, isClaude.value ? '#ffd7a735' : '#ffffff20');
     glow.addColorStop(1, '#ffffff00');
     ctx.fillStyle = glow; ctx.fillRect(-240, -240, 480, 480);
-    if (fill > .001 && fill < .999) {
+    if (displayFill > .001 && displayFill < .999) {
       ctx.beginPath();
       surface.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
       for (const p of [...surface].reverse()) ctx.lineTo(p.x + down.x * 12, p.y + down.y * 12);
@@ -58,7 +61,7 @@ function draw(now: number) {
     }
     ctx.restore();
   }
-  if (fill > .001 && fill < .999) {
+  if (displayFill > .001 && displayFill < .999) {
     ctx.beginPath();
     surface.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
     ctx.strokeStyle = isClaude.value ? '#fff0cddd' : '#f5f5f5ee';

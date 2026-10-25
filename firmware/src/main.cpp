@@ -19,6 +19,8 @@
 #include <XPowersLib.h>
 
 constexpr int W = 480, H = 24;
+// Leave 5px of headroom at full quota; keep the physics and volume solver intact.
+constexpr float kLiquidMaxFill = (480.f - 5) / 480;
 constexpr char VERSION[] = "0.3.14";
 Arduino_ESP32QSPI bus(12, 38, 4, 5, 6, 7, false);
 Arduino_CO5300 display(&bus, 39, 0, false, 480, 480, 0, 0, 0, 0);
@@ -767,7 +769,7 @@ void loop() {
     fill += (wanted - fill) * (1 - expf(-3 * dt));
     if (!known)
       fill = 0;
-    fluid.step(motion, viscosity, fill, dt);
+    fluid.step(motion, viscosity, fill * kLiquidMaxFill, dt);
   }
   if ((int32_t)(now - nextFrame) < 0) {
     delay(1);
@@ -793,7 +795,7 @@ void loop() {
   static int32_t surface[2801];
   int32_t surfaceTop = 0, surfaceBottom = 0;
   if (liquidVisible) {
-    shape.update(fluid, fill);
+    shape.update(fluid, fill * kLiquidMaxFill);
     shape.raster(surface, 2801, surfaceTop, surfaceBottom);
   }
   int32_t dx = (int32_t)(shape.c * 65536), dy = (int32_t)(-shape.s * 65536);
