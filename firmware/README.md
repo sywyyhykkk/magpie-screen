@@ -1,4 +1,4 @@
-# Magpie Screen 独立固件 0.3.18
+# Magpie Screen 独立固件 0.3.19
 
 适用硬件：Waveshare ESP32-S3-Touch-AMOLED-2.16，CO5300 480×480 AMOLED、QMI8658、CST92xx、AXP2101、16 MB Flash、8 MB OPI PSRAM。固件直接通过 Wi-Fi 读取 Magpie；日常无需运行网页预览或 USB 桥接。
 
@@ -45,11 +45,13 @@ API Key 和 Wi-Fi 密码保存在设备 NVS，不通过配置接口回显；API 
 
 | 按键 | 短按 | 长按 |
 | --- | --- | --- |
-| BOOT / GPIO0 | 液体余量 | 上电按住进入下载模式 |
+| BOOT / GPIO0 | 松开后进入液体余量 | USB 接入时长按 3 秒进入充电模式；上电按住仍进入下载模式 |
 | PWR / AXP2101 | 实时路由 | 保留 PMU 关机行为 |
 | GPIO18 | 今日概览 | 3 秒开启配置提示和临时热点 |
 
 熄屏后的首次按键只唤醒。触摸和明显移动也会唤醒。内容在旋转停稳后按 90° 翻正，使用 420 ms 过渡；液面独立跟随重力。
+
+**充电模式**：黑色背景，仅在中央显示电池百分比，固定 20% 亮度并保持亮屏。松开进入时的长按不会退出；之后按任意实体按键或拔掉 USB，返回进入前的正常页面并恢复对应电源的亮度与熄屏设置。退出用的按键不会同时切页或开启热点。触摸、移动和业务数据更新不会退出。无有效电量读数时显示 `--%`。充电模式不保存，重启后恢复正常页面。
 
 - **液体余量**：供应商图标、剩余比例、额度窗口。灰度抗锯齿文字与同源图片素材；窗口说明保持单行，分隔点两侧等距。
 - **实时路由**：来源、喜鹊、最多四个实际尝试目的地。只在新请求、尝试、响应和完成时播放一次动画；首次连接和重连不重播历史。所有请求完成且连续 10 秒无新路由活动后清空目的地，返回等待状态；未完成请求继续显示，重复快照不会重置计时或恢复已清空记录。
@@ -88,10 +90,13 @@ pio run -d firmware
 python3 firmware/test/level_config_test.py
 python3 firmware/test/quota_string_test.py
 python3 firmware/test/route_session_test.py
+python3 firmware/test/charging_buttons_test.py
 c++ -std=c++17 firmware/test/liquid_test.cpp -o /tmp/magpie-liquid-test
 /tmp/magpie-liquid-test
 c++ -std=c++17 firmware/test/power_policy_test.cpp -o /tmp/magpie-power-test
 /tmp/magpie-power-test
+c++ -std=c++17 firmware/test/charging_mode_test.cpp -o /tmp/magpie-charging-test
+/tmp/magpie-charging-test
 c++ -std=c++17 firmware/test/orientation_test.cpp -o /tmp/magpie-orientation-test
 /tmp/magpie-orientation-test
 c++ -std=c++17 firmware/test/route_flights_test.cpp -o /tmp/magpie-route-flights-test

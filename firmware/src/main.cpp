@@ -1,4 +1,5 @@
 #include "config_page.h"
+#include "charging_mode.h"
 
 #include "liquid.h"
 #include "orientation.h"
@@ -21,7 +22,7 @@
 constexpr int W = 480, H = 24;
 // Leave 5px of headroom at full quota; keep the physics and volume solver intact.
 constexpr float kLiquidMaxFill = (480.f - 5) / 480;
-constexpr char VERSION[] = "0.3.18";
+constexpr char VERSION[] = "0.3.19";
 Arduino_ESP32QSPI bus(12, 38, 4, 5, 6, 7, false);
 Arduino_CO5300 display(&bus, 39, 0, false, 480, 480, 0, 0, 0, 0);
 class StripCanvas : public Arduino_Canvas {
@@ -136,8 +137,9 @@ constexpr uint32_t kFrameUs = 16667; // 60 fps cap
 constexpr int kPalette = 1800, kSurfaceIndex = 32;
 String key, ssid, password, line;
 uint16_t palette[kPalette];
-bool prevBoot = false, prevKey = false;
-uint32_t keyTime = 0, bootTime = 0;
+bool prevKey = false, keyLongHandled = false;
+uint32_t keyTime = 0;
+ChargingMode chargingMode;
 struct Flight {
   String key, kind, target, request;
   bool failed;
@@ -252,6 +254,7 @@ void status(JsonObject s) {
   s["usb"] = usbPower;
   s["battery"] = batteryPresent;
   s["charging"] = charging;
+  s["chargingMode"] = chargingMode.active;
   s["chargeDone"] = chargeDone;
   s["batteryPercent"] = nullptr;
   if (batteryPresent && batteryPercent >= 0 && batteryPercent <= 100)
@@ -448,34 +451,41 @@ void io() {
   }
   uint32_t now = millis();
   bool b = digitalRead(0) == LOW, k = digitalRead(18) == LOW;
-  if (b && !prevBoot && now - bootTime > 150) {
-    if (screenOff)
-      userActivity();
-    else
-      selectScreen(1);
-    bootTime = now;
+  auto bootAction = chargingMode.boot(b, now, usbPower, screenOff);
+  if (bootAction == ChargingMode::BootAction::ShortPress) {
+    selectScreen(1);
+  } else if (bootAction != ChargingMode::BootAction::None) {
+    userActivity();
+    if (bootAction == ChargingMode::BootAction::Enter)
+      setupMode = false;
+    dirty = true;
   }
   if (k && !prevKey && now - keyTime > 150) {
-    if (screenOff)
+    if (chargingMode.exit()) {
+      keyLongHandled = true; // Consume the whole exit press, including its hold.
+      userActivity();
+      dirty = true;
+    } else if (screenOff)
       userActivity();
     else
       selectScreen(3);
     keyTime = now;
   }
-  static bool longHandled = false;
   if (!k)
-    longHandled = false;
-  if (k && now - keyTime >= 3000 && !longHandled) {
-    longHandled = true;
+    keyLongHandled = false;
+  if (k && now - keyTime >= 3000 && !keyLongHandled) {
+    keyLongHandled = true;
     startSetup();
   }
-  prevBoot = b;
   prevKey = k;
   if (pmuOK && now - lastPmu > 50) {
     lastPmu = now;
     pmu.getIrqStatus();
     if (pmu.isPekeyShortPressIrq()) {
-      if (screenOff)
+      if (chargingMode.exit()) {
+        userActivity();
+        dirty = true;
+      } else if (screenOff)
         userActivity();
       else
         selectScreen(2);
@@ -570,6 +580,14 @@ int routeY(int i,int n) { return n<=1?240:n==2?176+i*128:n==3?132+i*108:100+i*92
 void bird(Arduino_Canvas &c,int x,int y,bool facingLeft) { icon(c,x-16,y-16,icon_magpie32,false,facingLeft); }
 void drawUI(Arduino_Canvas &c,int) {
   constexpr uint16_t muted=0x9cd3, green=0xaeea;
+  if(chargingMode.active) {
+    String label=batteryPresent && batteryPercent>=0 && batteryPercent<=100
+                     ? String(batteryPercent)+"%" : "--%";
+    auto bounds=inkBounds(label,uiFont88);
+    uiText(c,240-(bounds.left+bounds.right)/2,
+           240-(bounds.top+bounds.bottom)/2,label,uiFont88);
+    return;
+  }
   if(setupMode) {
     uiText(c,32,80,"DEVICE SETUP",uiFont28);
     text(c,32,110,"Connect Wi-Fi / open in browser",1);
@@ -858,7 +876,7 @@ void loop() {
   bool known = !data["quota"]["remaining"].isNull();
   float wanted = known ? data["quota"]["remaining"].as<float>() / 100 : 0;
   // Physics advances in ~4 ms chunks between frames, not once per frame.
-  if (now - lastStep >= 4000) {
+  if (!chargingMode.active && now - lastStep >= 4000) {
     float dt = std::min((now - lastStep) / 1000000.f, .1f);
     lastStep = now;
     fill += (wanted - fill) * (1 - expf(-3 * dt));
@@ -876,8 +894,8 @@ void loop() {
   bool moving = fabsf(fill - wanted) > .0002f || !fluid.settled(target);
   bool turning=orientation.active(millis());
   float contentAngle=orientation.sample(millis());
-  bool flying = screen == 2 && !flights.empty();
-  if (!dirty && !turning && !orientation.wasActive && !(screen == 1 && !setupMode && known && moving) &&
+  bool flying = !chargingMode.active && screen == 2 && !flights.empty();
+  if (!dirty && !turning && !orientation.wasActive && !(screen == 1 && !setupMode && !chargingMode.active && known && moving) &&
       !flying)
     return;
   orientation.wasActive=turning;
@@ -885,7 +903,7 @@ void loop() {
   if (dirty || flying || overlayRotation != rotation)
     rebuildOverlay();
   dirty = false;
-  bool liquidVisible = screen == 1 && known && fill > .001f;
+  bool liquidVisible = !chargingMode.active && screen == 1 && known && fill > .001f;
   static liquid::Shape shape;
   static int32_t surface[2801];
   int32_t surfaceTop = 0, surfaceBottom = 0;
@@ -931,7 +949,7 @@ void loop() {
         }
       }
     } else
-      c.fillScreen(0x0861);
+      c.fillScreen(chargingMode.active ? 0x0000 : 0x0861);
     // Rotate only the content; liquid remains in the physical gravity frame.
     const uint16_t *ui=overlay.getFramebuffer();
     for(int row=0;row<H;row++) {
@@ -967,7 +985,7 @@ void loop() {
         if(ui[source]!=0x0001) dest[x]=blendFast(ui[source],dest[x],uiAlpha[source]);
       }
     }
-    if(screen==1&&!setupMode) for(int i=1;i<10;i++) c.drawFastHLine(458,48*i-sy,i%2?7:12,0x7bef);
+    if(screen==1&&!setupMode&&!chargingMode.active) for(int i=1;i<10;i++) c.drawFastHLine(458,48*i-sy,i%2?7:12,0x7bef);
     Transfer t{index, sy};
     xQueueSend(transfers, &t, portMAX_DELAY);
   }
@@ -1029,6 +1047,10 @@ void powerIO() {
     chargeDone = done;
     batteryPercent = pct;
     batteryMv = mv;
+    if (!usbPower && chargingMode.exit()) {
+      userActivity();
+      dirty = true;
+    }
     // Debounced low-voltage shutdown; percentage alone is not a calibrated
     // gauge.
     if (!usbPower && batteryPresent && mv > 0 && mv < 3300) {
@@ -1041,7 +1063,8 @@ void powerIO() {
   }
   bool low = batteryPresent && batteryPercent >= 0 && batteryPercent <= 10;
   auto decision =
-      power::evaluate(config.power, usbPower, low, now - lastActivity);
+      power::evaluate(config.power, usbPower, low, now - lastActivity,
+                      chargingMode.active);
   pollInterval = decision.pollMs;
   if (otaActive || (otaNoticeUntil && (int32_t)(otaNoticeUntil - now) > 0)) {
     requestedOff = screenOff = dimmed = false;
@@ -1055,7 +1078,7 @@ void powerIO() {
   }
   dimmed = decision.dim;
   requestedBrightness = decision.brightness;
-  if (previewBrightness >= 0) {
+  if (previewBrightness >= 0 && !chargingMode.active) {
     if ((int32_t)(previewUntil - now) > 0 &&
         ((previewSource == "usb") == usbPower))
       requestedBrightness = previewBrightness;
