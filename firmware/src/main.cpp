@@ -22,7 +22,7 @@
 constexpr int W = 480, H = 24;
 // Leave 5px of headroom at full quota; keep the physics and volume solver intact.
 constexpr float kLiquidMaxFill = (480.f - 5) / 480;
-constexpr char VERSION[] = "0.3.19";
+constexpr char VERSION[] = "0.3.20";
 Arduino_ESP32QSPI bus(12, 38, 4, 5, 6, 7, false);
 Arduino_CO5300 display(&bus, 39, 0, false, 480, 480, 0, 0, 0, 0);
 class StripCanvas : public Arduino_Canvas {
@@ -167,6 +167,7 @@ void userActivity();
 void startSetup();
 void networkIO();
 void powerIO();
+void updateUsbPower(bool usb);
 void setupStandaloneWeb();
 bool saveStandalone(JsonDocument &d, String &error);
 void updatePalette() {
@@ -478,9 +479,11 @@ void io() {
     startSetup();
   }
   prevKey = k;
-  if (pmuOK && now - lastPmu > 50) {
+  if (pmuOK && now - lastPmu >= 50) {
     lastPmu = now;
     pmu.getIrqStatus();
+    if (pmu.isVbusInsertIrq() || pmu.isVbusRemoveIrq())
+      updateUsbPower(pmu.isVbusIn());
     if (pmu.isPekeyShortPressIrq()) {
       if (chargingMode.exit()) {
         userActivity();
@@ -758,7 +761,10 @@ void setup() {
     // specification.
     pmu.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
     pmu.clearIrqStatus();
-    pmu.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ);
+    pmu.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ |
+                  XPOWERS_AXP2101_VBUS_INSERT_IRQ |
+                  XPOWERS_AXP2101_VBUS_REMOVE_IRQ);
+    updateUsbPower(pmu.isVbusIn());
   }
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(true);
@@ -1022,6 +1028,17 @@ void startSetup() {
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(setupSSID.c_str(), adminCode.c_str());
 }
+void updateUsbPower(bool usb) {
+  if (usb == usbPower)
+    return;
+  usbPower = usb;
+  if (!usb)
+    chargingMode.exit();
+  for (auto &t : due)
+    t = 0;
+  userActivity();
+  dirty = true;
+}
 void powerIO() {
   uint32_t now = millis();
   if (pmuOK && now - lastPowerRead >= 1000) {
@@ -1032,25 +1049,15 @@ void powerIO() {
         mv = battery ? pmu.getBattVoltage() : 0;
     bool done =
         battery && pmu.getChargerStatus() == XPOWERS_AXP2101_CHG_DONE_STATE;
-    if (usb != usbPower) {
-      lastActivity = now;
-      for (auto &t : due)
-        t = 0;
-      userActivity();
-    }
-    if (usb != usbPower || battery != batteryPresent || charge != charging ||
+    updateUsbPower(usb);
+    if (battery != batteryPresent || charge != charging ||
         pct != batteryPercent || done != chargeDone)
       dirty = true;
-    usbPower = usb;
     batteryPresent = battery;
     charging = charge;
     chargeDone = done;
     batteryPercent = pct;
     batteryMv = mv;
-    if (!usbPower && chargingMode.exit()) {
-      userActivity();
-      dirty = true;
-    }
     // Debounced low-voltage shutdown; percentage alone is not a calibrated
     // gauge.
     if (!usbPower && batteryPresent && mv > 0 && mv < 3300) {

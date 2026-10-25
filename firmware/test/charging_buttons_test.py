@@ -1,4 +1,4 @@
-"""Exercise the firmware's actual button dispatch with host GPIO/PMU stubs."""
+"""Exercise actual button, USB event and power dispatch with host PMU stubs."""
 import os
 from pathlib import Path
 import subprocess
@@ -9,30 +9,54 @@ source = (root / 'firmware/src/main.cpp').read_text()
 buttons = source.split('void io() {', 1)[1]
 buttons = buttons[buttons.index('  uint32_t now = millis();'):]
 buttons = buttons[:buttons.index('  static uint32_t lastTouch = 0;')]
+power = source[source.index('void updateUsbPower(bool usb) {'):]
+power = power[:power.index('void networkIO() {')]
 
 prefix = r'''
 #include "charging_mode.h"
+#include "power_policy.h"
 #include <cassert>
 #include <iostream>
+#include <string>
+#include <vector>
 constexpr int LOW = 0;
+constexpr int XPOWERS_AXP2101_CHG_DONE_STATE = 4;
 ChargingMode chargingMode;
 bool prevKey = false, keyLongHandled = false, usbPower = true;
 bool screenOff = false, setupMode = false, dirty = false, pmuOK = true;
 bool bootDown = false, keyDown = false;
 uint32_t keyTime = 0, lastPmu = 0, clockNow = 0;
+uint32_t lastActivity = 0, lastPowerRead = 0, lowSince = 0, due[3] = {};
+uint32_t pollInterval = 0, otaNoticeUntil = 0, previewUntil = 0, noticeUntil = 0;
+bool batteryPresent = true, charging = false, chargeDone = false;
+bool otaActive = false, requestedOff = false, dimmed = false;
+int batteryPercent = 80, batteryMv = 3800, requestedBrightness = 179;
+int previewBrightness = -1;
+std::string previewSource;
+std::vector<int> flights;
+struct Config { power::Settings power; } config;
 int screen = 2, selections = 0, setupCalls = 0;
 uint32_t millis() { return clockNow; }
 int digitalRead(int pin) { return !(pin == 0 ? bootDown : keyDown); }
-void userActivity() { screenOff = false; }
+void userActivity() { screenOff = requestedOff = false; lastActivity = millis(); }
 void selectScreen(int page) { screen = page; ++selections; userActivity(); }
 void startSetup() { setupMode = true; ++setupCalls; }
 struct Pmu {
-  bool shortPress = false;
+  bool shortPress = false, insert = false, remove = false, vbus = true;
+  int batteryReads = 0;
   void getIrqStatus() {}
   bool isPekeyShortPressIrq() { return shortPress; }
-  void clearIrqStatus() { shortPress = false; }
+  bool isVbusInsertIrq() { return insert; }
+  bool isVbusRemoveIrq() { return remove; }
+  bool isVbusIn() { return vbus; }
+  bool isBatteryConnect() { return true; }
+  bool isCharging() { return vbus; }
+  int getBatteryPercent() { ++batteryReads; return 80; }
+  int getBattVoltage() { return 3800; }
+  int getChargerStatus() { return 0; }
+  void shutdown() { assert(false); }
+  void clearIrqStatus() { shortPress = insert = remove = false; }
 } pmu;
-void buttons() {
 '''
 suffix = r'''
 }
@@ -69,13 +93,56 @@ int main() {
   tick(time+4100);
   tick(time+5000, false, false, true);
   assert(screen == 2);
+
+  // USB removal must exit in the 50 ms event pass, without a battery read.
+  time += 10000;
+  screen = 3; chargingMode.active = true; dirty = false;
+  requestedBrightness = 51;
+  due[0] = due[1] = due[2] = 1234;
+  lastPmu = lastPowerRead = time;
+  pmu.vbus = false; pmu.remove = true;
+  tick(time+49);
+  assert(chargingMode.active && usbPower && pmu.remove);
+  tick(time+50); powerIO();
+  assert(!chargingMode.active && !usbPower && screen == 3 && dirty);
+  assert(requestedBrightness == config.power.batteryBrightness);
+  assert(lastActivity == time+50 && pmu.batteryReads == 0);
+  assert(due[0] == 0 && due[1] == 0 && due[2] == 0 && !pmu.remove);
+
+  // Insertion updates power and brightness without entering charging mode.
+  pmu.vbus = true; pmu.insert = true;
+  tick(time+100); powerIO();
+  assert(usbPower && !chargingMode.active && screen == 3);
+  assert(requestedBrightness == config.power.usbBrightness);
+  assert(pmu.batteryReads == 0 && !pmu.insert);
+
+  // Both latched flags use actual VBUS state after a quick unplug/replug.
+  chargingMode.active = true;
+  pmu.insert = pmu.remove = true;
+  tick(time+150); powerIO();
+  assert(usbPower && chargingMode.active && requestedBrightness == 51);
+  assert(!pmu.insert && !pmu.remove && pmu.batteryReads == 0);
+  pmu.vbus = false; pmu.insert = pmu.remove = true;
+  tick(time+200); powerIO();
+  assert(!usbPower && !chargingMode.active);
+  assert(requestedBrightness == config.power.batteryBrightness);
+
+  // Battery telemetry keeps its one-second cadence and reconciles VBUS.
+  pmu.vbus = true;
+  tick(time+999); powerIO();
+  assert(!usbPower && pmu.batteryReads == 0);
+  tick(time+1000); powerIO();
+  assert(usbPower && pmu.batteryReads == 1 && batteryPercent == 80);
+  tick(time+1050); powerIO();
+  assert(pmu.batteryReads == 1);
   std::cout << "Charging button dispatch: all three exit keys preserve all "
-               "three pages; normal short/long actions passed\n";
+               "three pages; short/long actions, USB events, brightness and "
+               "battery cadence passed\n";
 }
 '''
 with tempfile.TemporaryDirectory() as tmp:
     path = Path(tmp)
-    (path / 'buttons.cpp').write_text(prefix + buttons + suffix)
+    (path / 'buttons.cpp').write_text(prefix + power + '\nvoid buttons() {\n' + buttons + suffix)
     command = [os.environ.get('CXX', 'c++'), '-std=c++17', '-fsanitize=address,undefined']
     if os.environ.get('SDKROOT'):
         command += ['-isysroot', os.environ['SDKROOT']]
