@@ -2,9 +2,19 @@
 #include <Arduino.h>
 #include "power_policy.h"
 #include <ArduinoJson.h>
+#include <cmath>
 struct DeviceConfig {
   String url, apiKey, provider = "codex", accountId, windowId;
   bool background = false, showIdentity = false;
+  float accelBiasXG = 0, accelBiasYG = 0;
+  float levelOffsetDegrees = 0;
+  // Missing direction settings inherit the old single offset on upgrade.
+  float directionalLevelOffsets[3] = {NAN, NAN, NAN};
+  float levelOffset(int direction) const {
+    if (direction == 0 || !std::isfinite(directionalLevelOffsets[direction - 1]))
+      return levelOffsetDegrees;
+    return directionalLevelOffsets[direction - 1];
+  }
   power::Settings power;
 };
 inline bool validURL(const String &s) {
@@ -42,6 +52,12 @@ inline void configJSON(JsonObject c, const DeviceConfig &v,
   c["windowId"] = v.windowId;
   c["background"] = v.background;
   c["showIdentity"] = v.showIdentity;
+  c["accelBiasXG"] = v.accelBiasXG;
+  c["accelBiasYG"] = v.accelBiasYG;
+  c["levelOffsetDegrees"] = v.levelOffsetDegrees;
+  c["levelOffsetRightDegrees"] = v.levelOffset(1);
+  c["levelOffsetDownDegrees"] = v.levelOffset(2);
+  c["levelOffsetLeftDegrees"] = v.levelOffset(3);
   c["usbBrightness"] = v.power.usbBrightness;
   c["batteryBrightness"] = v.power.batteryBrightness;
   c["usbSeconds"] = v.power.usbSeconds;
@@ -103,6 +119,24 @@ inline bool parseConfig(JsonObject c, DeviceConfig &v, String &error) {
         v.power.wakeOnData = b;
       if (k == "clearApiKey" && b)
         v.apiKey = "";
+    } else if (k == "accelBiasXG" || k == "accelBiasYG") {
+      if (!p.value().is<float>())
+        return fail("Invalid accelerometer bias");
+      float n = p.value().as<float>();
+      if (!std::isfinite(n) || n < -.5f || n > .5f)
+        return fail("Accelerometer bias must be between -0.5 and 0.5 g");
+      if (k == "accelBiasXG") v.accelBiasXG = n;
+      else v.accelBiasYG = n;
+    } else if (k == "levelOffsetDegrees" || k == "levelOffsetRightDegrees" ||
+               k == "levelOffsetDownDegrees" || k == "levelOffsetLeftDegrees") {
+      if (!p.value().is<float>())
+        return fail("Invalid level calibration angle");
+      float n = p.value().as<float>();
+      if (!std::isfinite(n) || n < -180 || n > 180)
+        return fail("Level calibration must be between -180 and 180 degrees");
+      if (k == "levelOffsetDegrees") v.levelOffsetDegrees = n;
+      else v.directionalLevelOffsets[k == "levelOffsetRightDegrees" ? 0 :
+                                    k == "levelOffsetDownDegrees" ? 1 : 2] = n;
     } else if (k == "usbBrightness" || k == "batteryBrightness" ||
                k == "usbSeconds" || k == "batterySeconds") {
       if (!p.value().is<int>())

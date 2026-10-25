@@ -84,10 +84,49 @@ inline Section flatSection(float angle, float fill) {
 // what the liquid feels, so lateral shakes deliberately pass through. Shakes
 // swing gravity without turning the board, so rotational effects use `turning`:
 // the gravity swing rate limited by the gyroscope's measured rotation rate.
+struct LevelCalibration {
+  // Looking at the display: buttons up, right, down, left. Clockwise board
+  // rotation moves gravity counterclockwise in screen coordinates.
+  float degrees[4] = {};
+  float correction(float sensorAngle) const {
+    float quarter = -sensorAngle / (kPi / 2);
+    quarter -= floorf(quarter / 4) * 4;
+    int i = std::min(3, (int)quarter);
+    // Use the exact setting within 15 degrees of each resting orientation;
+    // smoothly blend between those regions, including across the 360 seam.
+    float t = clamp((quarter - i - 1.f / 6) * 1.5f, 0, 1);
+    t = t * t * (3 - 2 * t);
+    return (degrees[i] + (degrees[(i + 1) % 4] - degrees[i]) * t) * kPi / 180;
+  }
+};
 struct Motion {
   float target = 0, spin = 0, turning = 0, accel = 0, gravity = 1, trend = 0,
         gyro = 0;
   bool holding = false, primed = false;
+  LevelCalibration calibration;
+  float sensorAngle = 0;
+  float biasX = 0, biasY = 0;
+  void setAccelBias(float x, float y) {
+    if (biasX == x && biasY == y) return;
+    biasX = x;
+    biasY = y;
+    // Re-prime the gravity filter from the next corrected sample. Editing a
+    // calibration must not be interpreted as angular speed/acceleration.
+    primed = false;
+    spin = turning = accel = trend = gyro = 0;
+  }
+  void setLevelOffset(float degrees) {
+    setLevelOffsets(degrees, degrees, degrees, degrees);
+  }
+  void setLevelOffsets(float up, float right, float down, float left) {
+    float previous = calibration.correction(sensorAngle);
+    calibration.degrees[0] = up;
+    calibration.degrees[1] = right;
+    calibration.degrees[2] = down;
+    calibration.degrees[3] = left;
+    // Shift the reference even while lying flat, without inventing a turn.
+    target += calibration.correction(sensorAngle) - previous;
+  }
   static float alpha(float dt, float hz) {
     return 1 / (1 + 1 / (2 * kPi * hz * dt));
   }
@@ -100,6 +139,8 @@ struct Motion {
   // gyroscope is available, in which case every gravity swing counts as a turn.
   void update(float x, float y, float z, float dt, float rate = NAN) {
     (void)z;
+    x -= biasX;
+    y -= biasY;
     dt = clamp(dt, .001f, .1f);
     float planar = sqrtf(x * x + y * y);
     // Lying flat leaves no in-plane gravity; hold the last direction.
@@ -107,12 +148,14 @@ struct Motion {
     gravity += (clamp(planar, .25f, 2.5f) - gravity) * alpha(dt, 8);
     float last = target, lastTurning = turning;
     if (!holding) {
+      sensorAngle = atan2f(x, y);
+      float corrected = sensorAngle + calibration.correction(sensorAngle);
       if (!primed) {
-        reset(atan2f(x, y));
+        reset(target + remainderf(corrected - target, 2 * kPi));
         return;
       }
       // One-euro filter: steady when still, low lag when turning fast.
-      float raw = target + remainderf(atan2f(x, y) - target, 2 * kPi);
+      float raw = target + remainderf(corrected - target, 2 * kPi);
       trend += ((raw - target) / dt - trend) * alpha(dt, 4);
       // Sub-pixel sensor noise at rest must not keep the liquid redrawing.
       if (fabsf(spin) > .02f || fabsf(raw - target) > .004f)

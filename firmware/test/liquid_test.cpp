@@ -43,6 +43,133 @@ static float shakePeak(float viscosity, liquid::Motion &m) {
   return peak;
 }
 int main() {
+  // Synthetic, exactly representable axis errors; not measurements from a board.
+  constexpr float kSyntheticBiasXG = .0625f, kSyntheticBiasYG = -.03125f;
+  // Subtract sensor-axis bias before angle, magnitude and slosh calculations.
+  for (int i = 0; i < 360; ++i) {
+    float angle = i * liquid::kPi / 180;
+    liquid::Motion biased, reference;
+    biased.setAccelBias(kSyntheticBiasXG, kSyntheticBiasYG);
+    for (int n = 0; n < 100; ++n) {
+      biased.update(sinf(angle) + kSyntheticBiasXG, cosf(angle) + kSyntheticBiasYG, 0, .01f, 0);
+      reference.update(sinf(angle), cosf(angle), 0, .01f, 0);
+    }
+    assert(fabsf(remainderf(biased.target - reference.target, 2 * liquid::kPi)) < .00001f);
+    assert(fabsf(biased.gravity - reference.gravity) < .00001f);
+  }
+  // Construct sensor vectors from known tilts plus the synthetic axis errors.
+  // Residual tilts must survive calibration; the algorithm must not snap them flat.
+  constexpr float kResidualTiltDegrees[4] = {.1f, -.2f, .15f, -.1f};
+  for (int q = 0; q < 4; ++q) {
+    float expected = -q * liquid::kPi / 2 + kResidualTiltDegrees[q] * liquid::kPi / 180;
+    float sensorX = sinf(expected) + kSyntheticBiasXG;
+    float sensorY = cosf(expected) + kSyntheticBiasYG;
+    liquid::Motion m;
+    m.setAccelBias(kSyntheticBiasXG, kSyntheticBiasYG);
+    liquid::Slosh f;
+    for (int i = 0; i < 1800; ++i) {
+      m.update(sensorX, sensorY, 0, .01f, 0);
+      f.step(m, .45f, 475.f / 480, .01f);
+    }
+    assert(fabsf(remainderf(m.target - expected, 2 * liquid::kPi)) < .00001f);
+    assert(f.settled(m.target));
+  }
+  liquid::Motion editBias;
+  editBias.reset(6 * liquid::kPi + .1f);
+  editBias.setAccelBias(kSyntheticBiasXG, kSyntheticBiasYG);
+  editBias.update(kSyntheticBiasXG, 1 + kSyntheticBiasYG, 0, .01f, 0);
+  assert(fabsf(editBias.target - 6 * liquid::kPi) < .00001f);
+  assert(editBias.spin == 0 && editBias.accel == 0);
+  editBias.setLevelOffset(2);
+  editBias.update(kSyntheticBiasXG, 1 + kSyntheticBiasYG, 0, .01f, 0);
+  assert(fabsf(remainderf(editBias.target, 2 * liquid::kPi) - 2 * liquid::kPi / 180) < .00001f);
+  editBias.update(kSyntheticBiasXG, kSyntheticBiasYG, 1, .01f, 0);
+  assert(editBias.holding);
+  // Reducing the maximum fill changes height, never the resting surface angle.
+  for (float quota : {.25f, .65f, 1.f}) for (int q = 0; q < 4; ++q) {
+    float angle = q * liquid::kPi / 2;
+    for (float cap : {1.f, 475.f / 480}) {
+      liquid::Motion motion;
+      liquid::Slosh fluid;
+      motion.update(sinf(angle), cosf(angle), 0, .01f, 0);
+      fluid.reset(motion.target);
+      for (int i = 0; i < 1200; ++i) {
+        motion.update(sinf(angle), cosf(angle), 0, .01f, 0);
+        fluid.step(motion, .45f, quota * cap, .01f);
+      }
+      assert(fabsf(remainderf(fluid.angle - angle, 2 * liquid::kPi)) < .0001f);
+      liquid::Shape shape(fluid, quota * cap);
+      float mid = (shape.left + shape.right) / 2;
+      float span = (shape.right - shape.left) * .3f;
+      assert(fabsf(shape.surface(mid + span) - shape.surface(mid - span)) < .01f);
+    }
+  }
+  // Distinct synthetic corrections exercise each direction independently,
+  // at half-full and near-full quota alike.
+  constexpr float kDirectionalCorrectionsDegrees[4] = {-2.5f, 1.25f, 4.f, -1.5f};
+  liquid::Motion fourWay;
+  fourWay.setLevelOffsets(kDirectionalCorrectionsDegrees[0], kDirectionalCorrectionsDegrees[1],
+                          kDirectionalCorrectionsDegrees[2], kDirectionalCorrectionsDegrees[3]);
+  for (int q = 0; q < 4; ++q) for (float quota : {.5f, 475.f / 480}) {
+    float ideal = -q * liquid::kPi / 2;
+    float bias = -kDirectionalCorrectionsDegrees[q] * liquid::kPi / 180;
+    liquid::Motion m;
+    m.setLevelOffsets(kDirectionalCorrectionsDegrees[0], kDirectionalCorrectionsDegrees[1],
+                      kDirectionalCorrectionsDegrees[2], kDirectionalCorrectionsDegrees[3]);
+    liquid::Slosh f;
+    for (int i = 0; i < 2400; ++i) {
+      m.update(sinf(ideal + bias), cosf(ideal + bias), 0, .01f, 0);
+      f.step(m, .45f, quota, .01f);
+    }
+    assert(fabsf(remainderf(m.target - ideal, 2 * liquid::kPi)) < .0001f);
+    assert(f.settled(m.target));
+    liquid::Shape s(f, quota);
+    assert(fabsf(s.area(s.level) / 230400 - quota) < .0001f);
+  }
+  // Smooth directional compensation has no discontinuity at quarter turns
+  // or the wrap boundary, and applying settings at rest adds no angular speed.
+  float prior = fourWay.calibration.correction(-4 * liquid::kPi);
+  for (int i = 1; i <= 14400; ++i) {
+    float a = -4 * liquid::kPi + i * liquid::kPi / 1800;
+    float current = fourWay.calibration.correction(a);
+    assert(fabsf(current - prior) < .0003f);
+    prior = current;
+  }
+  fourWay.update(1, 0, 0, .01f, 0);
+  fourWay.setLevelOffsets(1, 2, 3, 4);
+  fourWay.update(1, 0, 0, .01f, 0);
+  assert(fabsf(fourWay.target - (liquid::kPi / 2 + 4 * liquid::kPi / 180)) < .0001f);
+  assert(fabsf(fourWay.spin) < .0001f);
+  // Signed sensor bias cancels in the actual motion -> fluid pipeline.
+  for (float biasDegrees : {-12.5f, 0.f, 8.3f}) {
+    liquid::Motion calibrated;
+    liquid::Slosh level;
+    float bias = biasDegrees * liquid::kPi / 180;
+    calibrated.setLevelOffset(-biasDegrees);
+    for (int i = 0; i < 1200; ++i) {
+      calibrated.update(sinf(bias), cosf(bias), 0, .01f, 0);
+      level.step(calibrated, .45f, .5f, .01f);
+    }
+    assert(fabsf(calibrated.target) < .0001f);
+    assert(level.settled(0) && fabsf(level.angle) < .002f);
+    liquid::Shape levelShape(level, .5f);
+    assert(fabsf(levelShape.rotate(100, levelShape.level).y -
+                 levelShape.rotate(-100, levelShape.level).y) < .1f);
+    assert(fabsf(levelShape.area(levelShape.level) / 230400 - .5f) < .0001f);
+    // Saving a new offset shifts the reference, never the measured spin.
+    calibrated.setLevelOffset(5 - biasDegrees);
+    calibrated.update(sinf(bias), cosf(bias), 0, .01f, 0);
+    assert(fabsf(calibrated.target - 5 * liquid::kPi / 180) < .0001f);
+    assert(fabsf(calibrated.spin) < .0001f && fabsf(calibrated.accel) < .0001f);
+    // Calibration also works while in-plane gravity is too small to sample.
+    calibrated.update(0, 0, 1, .01f, 0);
+    calibrated.setLevelOffset(-biasDegrees);
+    calibrated.update(0, 0, 1, .01f, 0);
+    assert(calibrated.holding && fabsf(calibrated.target) < .0001f);
+    calibrated.setLevelOffset(0);
+    calibrated.update(sinf(bias), cosf(bias), 0, .01f, 0);
+    assert(fabsf(calibrated.target - bias) < .0001f);
+  }
   liquid::Slosh f;
   for (int n = 0; n < liquid::kModes; ++n)
     f.amp[n] = (n % 3 - 1) * 9.f / (n + 1);
@@ -97,11 +224,12 @@ int main() {
   assert(thick < medium && medium < thin && thin < 60);
   // The gravity filter unwraps continuously and holds when lying flat.
   liquid::Motion turn;
+  turn.setLevelOffset(15);
   for (int i = 0; i < 1200; ++i) {
     float a = i * .01f;
     turn.update(sinf(a), cosf(a), 0, 1.f / 100);
   }
-  assert(fabsf(turn.target - 11.99f) < .1f && fabsf(turn.spin - 1) < .05f);
+  assert(fabsf(turn.target - (11.99f + 15 * liquid::kPi / 180)) < .1f && fabsf(turn.spin - 1) < .05f);
   float held = turn.target;
   for (int i = 0; i < 100; ++i)
     turn.update(.05f, -.05f, 1, 1.f / 100);

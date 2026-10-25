@@ -21,7 +21,7 @@
 constexpr int W = 480, H = 24;
 // Leave 5px of headroom at full quota; keep the physics and volume solver intact.
 constexpr float kLiquidMaxFill = (480.f - 5) / 480;
-constexpr char VERSION[] = "0.3.14";
+constexpr char VERSION[] = "0.3.18";
 Arduino_ESP32QSPI bus(12, 38, 4, 5, 6, 7, false);
 Arduino_CO5300 display(&bus, 39, 0, false, 480, 480, 0, 0, 0, 0);
 class StripCanvas : public Arduino_Canvas {
@@ -119,7 +119,14 @@ liquid::Motion motion;
 DynamicJsonDocument data(24576);
 bool imuOK = false, gyroOK = false, pmuOK = false, orange = false, otaActive = false,
      otaFailed = false;
+enum class OtaStage { Receiving, Verifying, Restarting, Failed };
+OtaStage otaStage = OtaStage::Receiving;
+size_t otaBytes = 0, otaSize = 0;
+uint32_t otaNoticeUntil = 0;
+void renderOTA(bool force = false);
 float target = 0, fill = 0, viscosity = .45f, fps = 0;
+float sampleX = 0, sampleY = 0, sampleZ = 0, sampleGyroZ = NAN;
+uint32_t motionSampleAt = 0, motionSampleSequence = 0;
 int screen = 1, rotation = 0;
 OrientationTransition orientation;
 uint32_t nextFrame = 0, lastStep = 0, lastSample = 0, lastReport = 0,
@@ -329,8 +336,8 @@ bool authorized() {
          (adminCode.length() && supplied == adminCode);
 }
 void setupWeb() {
-  const char *headers[] = {"X-Magpie-Key"};
-  web.collectHeaders(headers, 1);
+  const char *headers[] = {"X-Magpie-Key", "X-Firmware-Size"};
+  web.collectHeaders(headers, 2);
   web.on("/command", HTTP_POST, []() {
     if (!authorized()) {
       web.send(401, "application/json", "{\"error\":\"Unauthorized\"}");
@@ -353,14 +360,20 @@ void setupWeb() {
           web.send(401, "application/json", "{\"error\":\"Unauthorized\"}");
           return;
         }
-        bool ok = otaActive && !otaFailed && !Update.hasError();
+        bool ok = otaActive && otaStage == OtaStage::Restarting &&
+                  !otaFailed && !Update.hasError();
+        otaStage = ok ? OtaStage::Restarting : OtaStage::Failed;
+        renderOTA(true);
         web.send(ok ? 200 : 400, "application/json",
                  ok ? "{\"ok\":true}"
                     : "{\"error\":\"Firmware validation/write failed\"}");
         otaActive = false;
         if (ok) {
-          delay(300);
+          delay(1200);
           ESP.restart();
+        } else {
+          otaNoticeUntil = millis() + 6000;
+          dirty = true;
         }
       },
       []() {
@@ -369,19 +382,43 @@ void setupWeb() {
         HTTPUpload &u = web.upload();
         if (u.status == UPLOAD_FILE_START) {
           otaActive = true;
+          otaStage = OtaStage::Receiving;
+          otaBytes = 0;
+          otaSize = std::max(0L, web.header("X-Firmware-Size").toInt());
+          otaNoticeUntil = 0;
+          userActivity();
+          renderOTA(true);
           otaFailed = !Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH);
+          if (otaFailed) {
+            otaStage = OtaStage::Failed;
+            renderOTA(true);
+          }
         } else if (u.status == UPLOAD_FILE_WRITE && !otaFailed) {
-          if (Update.write(u.buf, u.currentSize) != u.currentSize)
+          if (Update.write(u.buf, u.currentSize) != u.currentSize) {
             otaFailed = true;
+            otaStage = OtaStage::Failed;
+            renderOTA(true);
+          } else
+            otaBytes += u.currentSize;
+          renderOTA();
         } else if (u.status == UPLOAD_FILE_END) {
+          otaStage = OtaStage::Verifying;
+          renderOTA(true);
+          if (otaSize && otaBytes != otaSize)
+            otaFailed = true;
           if (!otaFailed && !Update.end(true))
             otaFailed = true;
           if (otaFailed)
             Update.abort();
+          otaStage = otaFailed ? OtaStage::Failed : OtaStage::Restarting;
         } else if (u.status == UPLOAD_FILE_ABORTED) {
           Update.abort();
           otaFailed = true;
           otaActive = false;
+          otaStage = OtaStage::Failed;
+          otaNoticeUntil = millis() + 6000;
+          renderOTA(true);
+          dirty = true;
         }
       });
   setupStandaloneWeb();
@@ -479,6 +516,54 @@ void io() {
 void text(Arduino_Canvas &c, int x, int y, const String &s, int size=2, uint16_t color=0xffff) {
   const UiFont &f=size==1?uiFont18:size==2?uiFont22:uiFont28;
   uiText(c,x,y+f.size,s,f,color,448-x);
+}
+// WebServer receives the upload inside handleClient(), so paint from its
+// callbacks rather than waiting for the regular rendering loop.
+void renderOTA(bool force) {
+  static uint32_t lastPaint = 0;
+  uint32_t now = millis();
+  if (!force && now - lastPaint < 250) return;
+  lastPaint = now;
+  requestedOff = false;
+  screenOff = false;
+  requestedBrightness = std::min(128, usbPower ? config.power.usbBrightness
+                                             : config.power.batteryBrightness);
+  constexpr uint16_t bg = 0x0861, green = 0xb6d3, muted = 0x8cf1;
+  bool failed = otaStage == OtaStage::Failed;
+  uint16_t accent = failed ? 0xf4ca : green;
+  uiClear(overlay.getFramebuffer());
+  uiRotation = rotation;
+  overlay.setRotation(rotation);
+  centered(overlay, 240, 76, "MAGPIE / SCREEN", uiFont18, muted);
+  icon(overlay, 224, 110, icon_magpie32);
+  centered(overlay, 240, 192, failed ? "UPDATE FAILED" : "FIRMWARE UPDATE", uiFont28, accent);
+  String stage = otaStage == OtaStage::Verifying ? "Verifying firmware"
+               : otaStage == OtaStage::Restarting ? "Complete / restarting"
+               : failed ? "Please retry from /config" : "Receiving firmware";
+  centered(overlay, 240, 234, stage, uiFont22, 0xffff);
+  bool complete = otaStage == OtaStage::Restarting;
+  int percent = complete ? 100 : otaSize ? std::min(size_t(99), otaBytes * 100 / otaSize) : 0;
+  String amount = complete || otaSize ? String(percent) + "%" : String(otaBytes / 1024) + " KB";
+  centered(overlay, 240, 291, amount, uiFont28, accent);
+  overlay.fillRoundRect(48, 314, 384, 10, 5, 0x2965);
+  int width = complete || otaSize ? 384 * percent / 100 : 48;
+  int left = complete || otaSize ? 48 : 48 + (otaBytes / 4096 % 7) * 48;
+  if (width > 0) overlay.fillRoundRect(left, 314, width, 10, std::min(5, width / 2), accent);
+  centered(overlay, 240, 375, failed ? "Current firmware retained" : "Keep power connected", uiFont18, muted);
+  centered(overlay, 240, 407, String("Installed v") + VERSION, uiFont18, muted);
+  const uint16_t *ui = overlay.getFramebuffer();
+  for (int sy = 0; sy < 480; sy += H) {
+    int index;
+    xQueueReceive(freeBuffers, &index, portMAX_DELAY);
+    uint16_t *pixels = canvases[index].getFramebuffer();
+    for (int i = 0; i < W * H; ++i) {
+      int source = sy * W + i;
+      pixels[i] = ui[source] == 0x0001 ? bg : blend565(ui[source], bg, uiAlpha[source]);
+    }
+    Transfer t{index, sy};
+    xQueueSend(transfers, &t, portMAX_DELAY);
+  }
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 }
 String value(JsonVariant v) { return v.isNull()?"--":v.as<String>(); }
 int routeY(int i,int n) { return n<=1?240:n==2?176+i*128:n==3?132+i*108:100+i*92; }
@@ -618,6 +703,10 @@ void setup() {
   String error;
   if (!deserializeJson(saved, prefs.getString("standalone", "{}")))
     parseConfig(saved.as<JsonObject>(), config, error);
+  motion.setAccelBias(config.accelBiasXG, config.accelBiasYG);
+  motion.setLevelOffsets(config.levelOffset(0), config.levelOffset(1),
+                         config.levelOffset(2), config.levelOffset(3));
+  target = motion.target;
   setupSSID =
       "Magpie-Screen-" + String((uint32_t)ESP.getEfuseMac() & 0xffff, HEX);
   requestedBrightness = config.power.usbBrightness;
@@ -704,6 +793,12 @@ void sampleMotion(uint32_t now) {
   float gx, gy, gz, rate = NAN;
   if (gyroOK && !screenOff && imu.getGyroscope(gx, gy, gz))
     rate = gz * liquid::kPi / 180;
+  sampleX = x;
+  sampleY = y;
+  sampleZ = z;
+  sampleGyroZ = rate;
+  motionSampleAt = millis();
+  ++motionSampleSequence;
   static float bx = 0, by = 0, bz = 0;
   static bool have = false;
   float distance =
@@ -739,7 +834,7 @@ void rebuildOverlay() {
 void loop() {
   io();
   if(adapter.clearIdleRoute(data.as<JsonObject>(),millis())) {flights.clear();dirty=true;}
-  if (otaActive) {
+  if (otaActive || (otaNoticeUntil && (int32_t)(otaNoticeUntil - millis()) > 0)) {
     delay(1);
     return;
   }
@@ -948,6 +1043,10 @@ void powerIO() {
   auto decision =
       power::evaluate(config.power, usbPower, low, now - lastActivity);
   pollInterval = decision.pollMs;
+  if (otaActive || (otaNoticeUntil && (int32_t)(otaNoticeUntil - now) > 0)) {
+    requestedOff = screenOff = dimmed = false;
+    return;
+  }
   if (decision.off != screenOff) {
     screenOff = decision.off;
     requestedOff = screenOff;
@@ -1115,6 +1214,10 @@ bool saveStandalone(JsonDocument &d, String &error) {
                 next.windowId != config.windowId;
   bool routing = next.background != config.background || next.showIdentity != config.showIdentity;
   config = next;
+  motion.setAccelBias(config.accelBiasXG, config.accelBiasYG);
+  motion.setLevelOffsets(config.levelOffset(0), config.levelOffset(1),
+                         config.levelOffset(2), config.levelOffset(3));
+  target = motion.target;
   viscosity = v;
   if (prefs.getFloat("viscosity", .45f) != v)
     prefs.putFloat("viscosity", v);
@@ -1149,6 +1252,46 @@ bool saveStandalone(JsonDocument &d, String &error) {
   return true;
 }
 void setupStandaloneWeb() {
+  // Read the latest normal sampling result; diagnostics do not reconfigure
+  // the IMU, adjust calibration, or introduce extra sensor reads.
+  web.on("/api/motion", HTTP_GET, []() {
+    if (!authorized()) {
+      web.send(401, "application/json", "{\"error\":\"Unauthorized\"}");
+      return;
+    }
+    StaticJsonDocument<1536> d;
+    d["imu"] = imuOK;
+    d["valid"] = motionSampleSequence != 0;
+    d["sequence"] = motionSampleSequence;
+    d["ageMs"] = motionSampleSequence ? millis() - motionSampleAt : 0;
+    if (motionSampleSequence) {
+      d["xG"] = sampleX;
+      d["yG"] = sampleY;
+      d["zG"] = sampleZ;
+      d["planarG"] = sqrtf(sampleX * sampleX + sampleY * sampleY);
+      float raw = atan2f(sampleX, sampleY);
+      d["rawDegrees"] = raw * 180 / liquid::kPi;
+      float x = sampleX - motion.biasX, y = sampleY - motion.biasY;
+      float calibrated = atan2f(x, y);
+      d["biasXG"] = motion.biasX;
+      d["biasYG"] = motion.biasY;
+      d["calibratedXG"] = x;
+      d["calibratedYG"] = y;
+      d["calibratedPlanarG"] = sqrtf(x * x + y * y);
+      d["calibratedDegrees"] = calibrated * 180 / liquid::kPi;
+      d["correctionDegrees"] = motion.calibration.correction(calibrated) * 180 / liquid::kPi;
+      d["targetDegrees"] = remainderf(target, 2 * liquid::kPi) * 180 / liquid::kPi;
+      d["liquidDegrees"] = remainderf(fluid.angle, 2 * liquid::kPi) * 180 / liquid::kPi;
+    }
+    d["gyroDegreesPerSecond"] = nullptr;
+    if (std::isfinite(sampleGyroZ)) d["gyroDegreesPerSecond"] = sampleGyroZ * 180 / liquid::kPi;
+    d["holding"] = motion.holding;
+    d["screenOff"] = screenOff;
+    String body;
+    serializeJson(d, body);
+    web.sendHeader("Cache-Control", "no-store");
+    web.send(200, "application/json", body);
+  });
   auto page = []() {
     web.sendHeader("Cache-Control", "no-store");
     web.send_P(200, "text/html; charset=utf-8", CONFIG_PAGE);
