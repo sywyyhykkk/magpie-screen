@@ -22,7 +22,7 @@
 constexpr int W = 480, H = 24;
 // Leave 5px of headroom at full quota; keep the physics and volume solver intact.
 constexpr float kLiquidMaxFill = (480.f - 5) / 480;
-constexpr char VERSION[] = "0.3.20";
+constexpr char VERSION[] = "0.3.21";
 Arduino_ESP32QSPI bus(12, 38, 4, 5, 6, 7, false);
 Arduino_CO5300 display(&bus, 39, 0, false, 480, 480, 0, 0, 0, 0);
 class StripCanvas : public Arduino_Canvas {
@@ -163,7 +163,7 @@ bool channelOK[3] = {};
 String channelError[3], quotaNotice, routeMode;
 uint32_t pollInterval = 10000, totalFrames = 0;
 int pollCursor = 0;
-void userActivity();
+void userActivity(bool chargingInteraction = false);
 void startSetup();
 void networkIO();
 void powerIO();
@@ -456,7 +456,7 @@ void io() {
   if (bootAction == ChargingMode::BootAction::ShortPress) {
     selectScreen(1);
   } else if (bootAction != ChargingMode::BootAction::None) {
-    userActivity();
+    userActivity(true);
     if (bootAction == ChargingMode::BootAction::Enter)
       setupMode = false;
     dirty = true;
@@ -500,7 +500,7 @@ void io() {
     lastTouch = now;
     int16_t x[5], y[5];
     if (touch.getPoint(x, y, 5) > 0)
-      userActivity();
+      userActivity(true);
   }
   if (wifiPending && !networkBusy) {
     wifiPending = false;
@@ -1007,7 +1007,10 @@ void loop() {
   totalFrames++;
 }
 
-void userActivity() {
+void userActivity(bool chargingInteraction) {
+  // Charging mode wakes and restarts its timeout only on entry or touch.
+  if (chargingMode.active && !chargingInteraction)
+    return;
   lastActivity = millis();
   if (screenOff) {
     screenOff = false;
@@ -1140,7 +1143,7 @@ void networkIO() {
           changed = adapter.trace(r->body.as<JsonObjectConst>(), config, root);
         if (changed && power::dataWakes(config.power, usbPower))
           userActivity();
-        else if (changed && !screenOff)
+        else if (changed && !screenOff && !chargingMode.active)
           lastActivity = millis();
         if (i == 2 && !screenOff) {
           for (JsonObject e : data["route"]["events"].as<JsonArray>()) {

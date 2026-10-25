@@ -67,8 +67,12 @@ int main() {
   power::Settings settings;
   settings.usbBrightness = 255;
   settings.usbSeconds = 30;
-  auto decision = power::evaluate(settings, true, false, 3600000, true);
+  settings.alwaysOn = true;
+  auto decision = power::evaluate(settings, true, false, 29999, true);
   assert(!decision.off && !decision.dim && decision.brightness == 51);
+  decision = power::evaluate(settings, true, false, 30000, true);
+  assert(decision.off && !decision.dim);
+  assert(power::evaluate(settings, true, false, 3600000, true).off);
   decision = power::evaluate(settings, true, false, 0, false);
   assert(!decision.off && decision.brightness == 255);
   decision = power::evaluate(settings, false, false, 0, true);
