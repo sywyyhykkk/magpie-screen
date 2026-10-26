@@ -1,11 +1,14 @@
 #pragma once
 #include <Arduino.h>
 #include "power_policy.h"
+#include "provider_appearance.h"
 #include <ArduinoJson.h>
 #include <cmath>
 struct DeviceConfig {
   String url, apiKey, provider = "codex", accountId, windowId;
+  String liquidTheme = "auto", quotaIcon = "auto";
   bool background = false, showIdentity = false;
+  bool wifiCompatibility = false;
   float accelBiasXG = 0, accelBiasYG = 0;
   float levelOffsetDegrees = 0;
   // Missing direction settings inherit the old single offset on upgrade.
@@ -50,8 +53,11 @@ inline void configJSON(JsonObject c, const DeviceConfig &v,
   c["provider"] = v.provider;
   c["accountId"] = v.accountId;
   c["windowId"] = v.windowId;
+  c["liquidTheme"] = v.liquidTheme;
+  c["quotaIcon"] = v.quotaIcon;
   c["background"] = v.background;
   c["showIdentity"] = v.showIdentity;
+  c["wifiCompatibility"] = v.wifiCompatibility;
   c["accelBiasXG"] = v.accelBiasXG;
   c["accelBiasYG"] = v.accelBiasYG;
   c["levelOffsetDegrees"] = v.levelOffsetDegrees;
@@ -104,8 +110,14 @@ inline bool parseConfig(JsonObject c, DeviceConfig &v, String &error) {
         v.accountId = val;
       if (k == "windowId")
         v.windowId = val;
+    } else if (k == "liquidTheme" || k == "quotaIcon") {
+      if (!p.value().is<const char *>() ||
+          !appearance::validChoice(p.value().as<const char *>()))
+        return fail("Invalid appearance choice");
+      if (k == "liquidTheme") v.liquidTheme = p.value().as<String>();
+      else v.quotaIcon = p.value().as<String>();
     } else if (k == "background" || k == "showIdentity" || k == "alwaysOn" || k == "wakeOnData" ||
-               k == "clearApiKey") {
+               k == "clearApiKey" || k == "wifiCompatibility") {
       if (!p.value().is<bool>())
         return fail("Invalid switch");
       bool b = p.value();
@@ -113,6 +125,8 @@ inline bool parseConfig(JsonObject c, DeviceConfig &v, String &error) {
         v.background = b;
       if (k == "showIdentity")
         v.showIdentity = b;
+      if (k == "wifiCompatibility")
+        v.wifiCompatibility = b;
       if (k == "alwaysOn")
         v.power.alwaysOn = b;
       if (k == "wakeOnData")

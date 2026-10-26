@@ -21,7 +21,7 @@ for size in [18, 22, 28, 42, 88]:
         pixels.extend(im.getdata() if w*h else [])
     lines += [f'static const uint8_t uiPixels{size}[] = {{'+','.join(map(str,pixels))+'};', f'static const UiGlyph uiGlyphs{size}[] = {{'+','.join('{'+','.join(map(str,g))+'}' for g in glyphs)+'};',f'static const UiFont uiFont{size} = {{uiPixels{size},uiGlyphs{size},{len(glyphs)},{size}}};']
 lines += ['struct UiIcon { const uint8_t *rgba; int size; };']
-for name in ['magpie','chatgpt','claude','cursor']:
+for name in ['magpie','chatgpt','claude','cursor','gemini']:
     for size in [32,40]:
         im=Image.open(io.BytesIO(resvg_py.svg_to_bytes(svg_path=str(root/f'src/assets/{name}.svg'),width=size*3,height=size*3))).convert('RGBA').resize((size,size),Image.Resampling.LANCZOS)
         if name == 'magpie':

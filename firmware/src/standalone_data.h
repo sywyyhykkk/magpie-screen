@@ -1,5 +1,6 @@
 #pragma once
 #include "standalone_config.h"
+#include "route_flights.h"
 #include <ArduinoJson.h>
 #include <map>
 #include <cmath>
@@ -212,7 +213,7 @@ struct DataAdapter {
     bool suppress=false;
     auto push = [&](String id, const char *kind, String suffix, String dest,
                     bool failed = false) {
-      if (!baseline[2] || suppress || events.size() >= 12)
+      if (!baseline[2] || suppress || events.size() >= route_flights::capacity)
         return;
       auto e = events.createNestedObject();
       e["key"] = String(pid) + ":" + id + ":" + suffix;

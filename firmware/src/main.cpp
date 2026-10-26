@@ -1,5 +1,6 @@
 #include "config_page.h"
 #include "charging_mode.h"
+#include "wifi_diagnostics.h"
 
 #include "liquid.h"
 #include "orientation.h"
@@ -16,13 +17,14 @@
 #include <Update.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <Wire.h>
 #include <XPowersLib.h>
 
 constexpr int W = 480, H = 24;
 // Leave 5px of headroom at full quota; keep the physics and volume solver intact.
 constexpr float kLiquidMaxFill = (480.f - 5) / 480;
-constexpr char VERSION[] = "0.3.21";
+constexpr char VERSION[] = "0.3.28";
 Arduino_ESP32QSPI bus(12, 38, 4, 5, 6, 7, false);
 Arduino_CO5300 display(&bus, 39, 0, false, 480, 480, 0, 0, 0, 0);
 class StripCanvas : public Arduino_Canvas {
@@ -118,7 +120,8 @@ WebServer web(80);
 liquid::Slosh fluid;
 liquid::Motion motion;
 DynamicJsonDocument data(24576);
-bool imuOK = false, gyroOK = false, pmuOK = false, orange = false, otaActive = false,
+appearance::Brand liquidTheme = appearance::Brand::Codex;
+bool imuOK = false, gyroOK = false, pmuOK = false, otaActive = false,
      otaFailed = false;
 enum class OtaStage { Receiving, Verifying, Restarting, Failed };
 OtaStage otaStage = OtaStage::Receiving;
@@ -154,6 +157,18 @@ bool touchOK = false, screenOff = false, dimmed = false, dirty = true;
 bool usbPower = false, batteryPresent = false, charging = false,
      chargeDone = false;
 bool setupMode = false, networkBusy = false, wifiPending = false;
+WifiDiagnostics wifiDiagnostics;
+struct WifiEvent { arduino_event_id_t id; uint8_t reason; };
+QueueHandle_t wifiEvents = nullptr;
+bool wifiScanPending = false, wifiScanning = false;
+bool wifiScanStarted = false, wifiScanReconnect = false;
+bool wifiScanDone = false;
+bool wifiScanDiagnostic = true, wifiScanDisconnected = false;
+String wifiNetworksJSON = "{\"state\":\"idle\",\"networks\":[]}";
+int wifiScanResult = WIFI_SCAN_RUNNING;
+const char *wifiScanError = "";
+bool wifiWeakSecurity = false;
+uint32_t wifiScanAt = 0;
 int batteryPercent = -1, batteryMv = 0, previewBrightness = -1;
 String previewSource;
 uint32_t setupStarted = 0, lastActivity = 0, lastPowerRead = 0, lowSince = 0;
@@ -171,20 +186,27 @@ void updateUsbPower(bool usb);
 void setupStandaloneWeb();
 bool saveStandalone(JsonDocument &d, String &error);
 void updatePalette() {
-  bool next = config.provider == "claude" || config.provider == "anthropic";
-  if (orange != next) {
-    orange = next;
+  auto next = appearance::liquidTheme(config.liquidTheme.c_str(), config.provider.c_str());
+  if (liquidTheme != next) {
+    liquidTheme = next;
     dirty = true;
   }
 }
 // Colour at depth d px below the surface (negative: above it).
 static void shade(float d, float rgb[3]) {
-  float r = orange?36:65, g = orange?33:65, b = orange?38:65;
+  bool orange = liquidTheme == appearance::Brand::Claude;
+  bool blue = liquidTheme == appearance::Brand::Gemini;
+  float r = orange?36:blue?25:65, g = orange?33:blue?33:65, b = orange?38:blue?49:65;
   if (d < 0) {
     float glow = liquid::clamp(1 + d / 4, 0, 1);
     r += glow * 55;
     g += glow * 52;
     b += glow * 45;
+  } else if (blue) {
+    float t = liquid::clamp(d / 430, 0, 1);
+    r = 49 - 33 * t;
+    g = 134 - 90 * t;
+    b = 255 - 145 * t;
   } else if (orange) {
     float t = liquid::clamp(d / 430, 0, 1);
     r = 249 - 121 * t;
@@ -195,8 +217,8 @@ static void shade(float d, float rgb[3]) {
     r = g = b = 105 - 90 * sqrtf(t);
   }
   if (d >= 0 && d < 2) {
-    r = 245;
-    g = 240;
+    r = blue ? 205 : 245;
+    g = blue ? 230 : 240;
     b = orange ? 205 : 245;
   } else if (d >= 2 && d < 12) {
     r += 18;
@@ -229,6 +251,201 @@ void selectScreen(int n) {
   }
   dirty = true;
 }
+wifi_auth_mode_t minimumWifiAuth() {
+  return config.wifiCompatibility ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_WPA2_PSK;
+}
+const char *wifiError() {
+  if (wifiDiagnostics.phase != WifiDiagnostics::Phase::Failed)
+    return "";
+  if (wifiDiagnostics.timedOut)
+    return wifiDiagnostics.associated ? "已连接热点，但获取 IP 超时，请检查路由器 DHCP"
+                                      : "连接超时，请检查热点、信号和安全设置";
+  switch (wifiDiagnostics.reason) {
+  case WIFI_REASON_NO_AP_FOUND:
+    return wifiWeakSecurity
+        ? (config.wifiCompatibility
+            ? "热点加密方式低于 WPA，请使用支持 WPA 或 WPA2 的热点"
+            : "热点加密方式低于 WPA2，可在配置页开启兼容模式以连接 WPA 热点")
+        : "未找到符合连接条件的 2.4 GHz 热点，请检查名称、信号和加密方式";
+  case WIFI_REASON_AUTH_FAIL: return "认证失败，请检查密码和路由器访问限制";
+  case WIFI_REASON_AUTH_EXPIRE: return "认证超时，请检查信号和路由器安全设置";
+  case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+  case WIFI_REASON_HANDSHAKE_TIMEOUT: return "密钥握手超时，请检查密码、信号和加密兼容性";
+  case WIFI_REASON_ASSOC_TOOMANY: return "热点连接数已满";
+  case WIFI_REASON_ASSOC_FAIL: return "热点关联失败，请检查路由器访问限制和兼容性";
+  case WIFI_REASON_BEACON_TIMEOUT: return "热点信号丢失";
+  default: return "Wi-Fi 连接断开，请检查热点和路由器设置";
+  }
+}
+const char *wifiAuthName(wifi_auth_mode_t auth) {
+  switch (auth) {
+  case WIFI_AUTH_OPEN: return "Open";
+  case WIFI_AUTH_WEP: return "WEP";
+  case WIFI_AUTH_WPA_PSK: return "WPA-Personal";
+  case WIFI_AUTH_WPA2_PSK: return "WPA2-Personal";
+  case WIFI_AUTH_WPA_WPA2_PSK: return "WPA/WPA2-Personal";
+  case WIFI_AUTH_WPA2_ENTERPRISE: return "WPA2-Enterprise";
+  case WIFI_AUTH_WPA3_PSK: return "WPA3-Personal";
+  case WIFI_AUTH_WPA2_WPA3_PSK: return "WPA2/WPA3-Personal";
+  default: return "Other";
+  }
+}
+void wifiLog(const char *event) {
+  StaticJsonDocument<768> d;
+  d["type"] = "wifi_event";
+  d["event"] = event;
+  d["uptimeMs"] = millis();
+  d["ssid"] = ssid;
+  d["wifiCompatibility"] = config.wifiCompatibility;
+  d["wifi"] = wifiDiagnostics.state();
+  d["wlStatus"] = int(WiFi.status());
+  d["reason"] = wifiDiagnostics.reason;
+  d["reasonName"] = wifiDiagnostics.reason
+      ? WiFi.disconnectReasonName(wifi_err_reason_t(wifiDiagnostics.reason)) : "";
+  d["error"] = wifiError();
+  if (WiFi.status() == WL_CONNECTED) {
+    d["ip"] = WiFi.localIP().toString();
+    d["rssi"] = WiFi.RSSI();
+    d["channel"] = WiFi.channel();
+  }
+  serializeJson(d, Serial);
+  Serial.println();
+}
+void wifiIO() {
+  WifiEvent event;
+  while (xQueueReceive(wifiEvents, &event, 0) == pdTRUE) {
+    switch (event.id) {
+    case ARDUINO_EVENT_WIFI_SCAN_DONE:
+      if (wifiScanning) {
+        wifiScanDone = true;
+        wifiScanResult = event.reason ? WIFI_SCAN_FAILED : WiFi.scanComplete();
+        if (event.reason) wifiScanError = "Scan aborted by Wi-Fi driver";
+      }
+      break;
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      wifiDiagnostics.associated = true;
+      wifiLog("associated");
+      break;
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      wifiDiagnostics.connected();
+      wifiLog("got_ip");
+      break;
+    case ARDUINO_EVENT_WIFI_STA_LOST_IP:
+      wifiDiagnostics.begin(millis());
+      wifiDiagnostics.associated = true;
+      wifiLog("lost_ip");
+      break;
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      // WiFi.disconnect() during an explicit retry is not an AP failure.
+      if (event.reason == WIFI_REASON_ASSOC_LEAVE &&
+          (wifiScanning || wifiDiagnostics.phase == WifiDiagnostics::Phase::Connecting))
+        break;
+      wifiDiagnostics.disconnected(event.reason);
+      wifiLog("disconnected");
+      break;
+    default: break;
+    }
+  }
+  if (wifiDiagnostics.poll(millis(), WiFi.status() == WL_CONNECTED))
+    wifiLog("timeout");
+  if (wifiScanPending && !wifiScanning && !networkBusy && !otaActive) {
+    wifiScanPending = false;
+    // Keep the configuration page reachable when already connected. When
+    // offline, pause automatic connection attempts so the SDK can scan.
+    wifiScanDisconnected = wifiScanDiagnostic || WiFi.status() != WL_CONNECTED;
+    wifiScanReconnect = WiFi.getAutoReconnect();
+    WiFi.setAutoReconnect(false);
+    wifiScanning = true;
+    wifiScanStarted = false;
+    wifiScanDone = false;
+    wifiScanResult = WIFI_SCAN_RUNNING;
+    wifiScanError = "";
+    wifiScanAt = millis();
+    if (wifiScanDisconnected) WiFi.disconnect();
+    wifiLog("scan_begin");
+  }
+  if (!wifiScanning) return;
+  if (!wifiScanStarted) {
+    if (millis() - wifiScanAt < 150) return;
+    // Zero-initialize all SDK scan fields and wait for SCAN_DONE ourselves;
+    // Arduino's fixed scan timer can expire before a full channel scan ends.
+    wifi_scan_config_t scan{};
+    scan.show_hidden = true;
+    scan.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+    scan.scan_time.active.min = 100;
+    scan.scan_time.active.max = 300;
+    esp_err_t result = esp_wifi_scan_start(&scan, false);
+    wifiScanStarted = true;
+    if (result != ESP_OK) {
+      wifiScanDone = true;
+      wifiScanResult = WIFI_SCAN_FAILED;
+      wifiScanError = esp_err_to_name(result);
+    }
+  }
+  if (!wifiScanDone) {
+    if (millis() - wifiScanAt < 20000) return;
+    esp_wifi_scan_stop();
+    wifiScanResult = WIFI_SCAN_FAILED;
+    wifiScanError = "Scan timed out";
+  }
+  int count = wifiScanResult;
+  DynamicJsonDocument d(4096);
+  d["type"] = "wifi_scan";
+  d["ssid"] = ssid;
+  d["count"] = count;
+  d["error"] = wifiScanError;
+  d["minimumAuth"] = password.length() ? int(minimumWifiAuth()) : int(WIFI_AUTH_OPEN);
+  bool found = false, meetsMinimum = false;
+  auto matches = d.createNestedArray("matches");
+  for (int i = 0; i < count; ++i) {
+    if (WiFi.SSID(i) != ssid) continue;
+    found = true;
+    auto auth = WiFi.encryptionType(i);
+    bool allowed = !password.length() || auth >= minimumWifiAuth();
+    meetsMinimum |= allowed;
+    auto row = matches.createNestedObject();
+    row["rssi"] = WiFi.RSSI(i);
+    row["channel"] = WiFi.channel(i);
+    row["auth"] = int(auth);
+    row["authName"] = wifiAuthName(auth);
+    row["meetsMinimumAuth"] = allowed;
+    row["bssid"] = WiFi.BSSIDstr(i);
+  }
+  if (count >= 0) wifiWeakSecurity = found && !meetsMinimum;
+  d["securityMismatch"] = wifiWeakSecurity;
+  serializeJson(d, Serial);
+  Serial.println();
+  DynamicJsonDocument networks(16384);
+  networks["state"] = count < 0 ? "failed" : "done";
+  networks["error"] = count < 0 ? "扫描失败，请重试或手动输入网络名称" : "";
+  auto rows = networks.createNestedArray("networks");
+  std::vector<int> order;
+  for (int i = 0; i < count; ++i) order.push_back(i);
+  std::sort(order.begin(), order.end(), [](int a, int b) {
+    return WiFi.RSSI(a) > WiFi.RSSI(b);
+  });
+  std::vector<String> names;
+  for (int i : order) {
+    String name = WiFi.SSID(i);
+    if (!name.length() || std::find(names.begin(), names.end(), name) != names.end())
+      continue;
+    if (names.size() == 64) break;
+    names.push_back(name);
+    auto row = rows.createNestedObject();
+    row["ssid"] = name;
+    row["rssi"] = WiFi.RSSI(i);
+    row["authName"] = wifiAuthName(WiFi.encryptionType(i));
+  }
+  wifiNetworksJSON = "";
+  serializeJson(networks, wifiNetworksJSON);
+  WiFi.scanDelete();
+  wifiScanning = false;
+  WiFi.setAutoReconnect(wifiScanReconnect);
+  if (wifiScanDisconnected && ssid.length()) {
+    WiFi.setMinSecurity(minimumWifiAuth());
+    WiFi.begin(ssid.c_str(), password.c_str());
+  }
+}
 void status(JsonObject s) {
   s["type"] = "status";
   s["version"] = VERSION;
@@ -236,9 +453,13 @@ void status(JsonObject s) {
   s["fps"] = fps;
   s["ip"] =
       WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "0.0.0.0";
-  s["wifi"] = WiFi.status() == WL_CONNECTED ? "connected"
-              : ssid.length()               ? "connecting"
-                                            : "not configured";
+  s["wifi"] = wifiDiagnostics.state();
+  s["wifiError"] = wifiError();
+  s["wifiReason"] = wifiDiagnostics.reason;
+  s["wifiReasonName"] = wifiDiagnostics.reason
+      ? WiFi.disconnectReasonName(wifi_err_reason_t(wifiDiagnostics.reason)) : "";
+  s["wifiStatus"] = int(WiFi.status());
+  s["wifiCompatibility"] = config.wifiCompatibility;
   s["ssid"] = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : ssid;
   s["routeTargets"] = data["route"]["targets"].size();
   s["paired"] = key.length() > 0;
@@ -281,7 +502,7 @@ void status(JsonObject s) {
   }
 }
 void serialStatus() {
-  StaticJsonDocument<2048> d;
+  StaticJsonDocument<3072> d;
   status(d.to<JsonObject>());
   serializeJson(d, Serial);
   Serial.println();
@@ -308,6 +529,18 @@ bool command(JsonDocument &d, bool usb, String &error) {
   }
   if (op == "ping")
     return true;
+  if (usb && op == "wifi_scan") {
+    if (!wifiScanning && !wifiScanPending) {
+      wifiScanDiagnostic = true;
+      wifiScanPending = true;
+    }
+    return true;
+  }
+  if (usb && op == "wifi_retry") {
+    if (!ssid.length()) { error = "Wi-Fi not configured"; return false; }
+    wifiPending = true;
+    return true;
+  }
   if (op == "config") {
     error = "Use the device /config page for standalone settings";
     return false;
@@ -321,6 +554,7 @@ bool command(JsonDocument &d, bool usb, String &error) {
     }
     ssid = s;
     password = p;
+    wifiWeakSecurity = false;
     prefs.putString("ssid", s);
     prefs.putString("password", p);
     wifiPending = true;
@@ -503,12 +737,17 @@ void io() {
       userActivity(true);
   }
   if (wifiPending && !networkBusy) {
-    wifiPending = false;
-    WiFi.disconnect();
-    WiFi.begin(ssid.c_str(), password.c_str());
-    adapter.reset();
-    for (auto &t : due)
-      t = 0;
+    if (!wifiScanning) {
+      wifiPending = false;
+      wifiDiagnostics.begin(now);
+      WiFi.disconnect();
+      WiFi.setMinSecurity(minimumWifiAuth());
+      WiFi.begin(ssid.c_str(), password.c_str());
+      wifiLog("begin");
+      adapter.reset();
+      for (auto &t : due)
+        t = 0;
+    }
   }
   if (setupStarted && now - setupStarted >= 600000) {
     setupStarted = 0;
@@ -517,6 +756,7 @@ void io() {
     WiFi.mode(WIFI_STA);
     dirty = true;
   }
+  wifiIO();
   networkIO();
   powerIO();
   if (now - lastReport >= 2000) {
@@ -579,7 +819,7 @@ void renderOTA(bool force) {
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 }
 String value(JsonVariant v) { return v.isNull()?"--":v.as<String>(); }
-int routeY(int i,int n) { return n<=1?240:n==2?176+i*128:n==3?132+i*108:100+i*92; }
+int routeY(int i,int n) { return route_flights::rowY(i,n); }
 void bird(Arduino_Canvas &c,int x,int y,bool facingLeft) { icon(c,x-16,y-16,icon_magpie32,false,facingLeft); }
 void drawUI(Arduino_Canvas &c,int) {
   constexpr uint16_t muted=0x9cd3, green=0xaeea;
@@ -604,7 +844,10 @@ void drawUI(Arduino_Canvas &c,int) {
   if(screen==1) {
     String p=data["quota"]["provider"]|"MAGPIE", name=p; name.toUpperCase();
     int w=textWidth(name,uiFont22), left=240-(w+44)/2;
-    icon(c,left,148,providerIcon(p),true); uiText(c,left+44,173,name,uiFont22);
+    String iconProvider = config.quotaIcon == "auto" ? p : config.quotaIcon;
+    icon(c,left,148,providerIcon(iconProvider),
+         appearance::brand(iconProvider.c_str()) != appearance::Brand::Gemini);
+    uiText(c,left+44,173,name,uiFont22);
     bool known=!data["quota"]["remaining"].isNull();
     float n=data["quota"]["remaining"]|0.f;
     String amount=known?String(n,n==floorf(n)?0:1):"--";
@@ -655,18 +898,21 @@ void drawUI(Arduino_Canvas &c,int) {
       i++;
     }
     if(!i) { c.drawFastHLine(222,240,48,0x52aa); centered(c,360,248,"等待请求",uiFont22,muted); }
+    const uint32_t now = millis();
     for(auto &f:flights) {
-      const uint32_t now = millis();
       if (!route_flights::active(now, f.start)) continue;
-      float t=route_flights::progress(now,f.start); int x1=84,x2=146,y2=240;
-      if(f.kind=="attempt"||f.kind=="response") {
-        x1=222; x2=270; int index=0;
+      const bool destination=f.kind=="attempt"||f.kind=="response";
+      int y2=240;
+      if(destination) {
+        int index=0;
         for(JsonObject a:targets) { if(f.target==(a["key"]|"")) break; index++; }
-        y2=routeY(std::min(index,3),(int)targets.size());
+        // A hidden/removed destination must never fly to an unrelated row.
+        if(index >= (int)targets.size()) continue;
+        y2=routeY(index,(int)targets.size());
       }
       bool returning=f.kind=="response"||f.kind=="result";
-      if(returning) t=1-t;
-      bird(c,x1+(x2-x1)*t,240+(y2-240)*t-18*sinf(t*liquid::kPi),returning);
+      auto point=route_flights::position(route_flights::progress(now,f.start),destination,y2,returning);
+      bird(c,lroundf(point.x),lroundf(point.y),returning);
     }
   } else {
     auto u=data["usage"];
@@ -766,11 +1012,29 @@ void setup() {
                   XPOWERS_AXP2101_VBUS_REMOVE_IRQ);
     updateUsbPower(pmu.isVbusIn());
   }
+  wifiEvents = xQueueCreate(16, sizeof(WifiEvent));
+  if (!wifiEvents) { while (true) delay(1000); }
+  WiFi.onEvent([](arduino_event_id_t id, arduino_event_info_t info) {
+    if (id != ARDUINO_EVENT_WIFI_SCAN_DONE &&
+        id != ARDUINO_EVENT_WIFI_STA_CONNECTED &&
+        id != ARDUINO_EVENT_WIFI_STA_DISCONNECTED &&
+        id != ARDUINO_EVENT_WIFI_STA_GOT_IP &&
+        id != ARDUINO_EVENT_WIFI_STA_LOST_IP) return;
+    WifiEvent event{id, uint8_t(id == ARDUINO_EVENT_WIFI_STA_DISCONNECTED
+                                  ? info.wifi_sta_disconnected.reason
+                                  : id == ARDUINO_EVENT_WIFI_SCAN_DONE
+                                      ? info.wifi_scan_done.status : 0)};
+    xQueueSend(wifiEvents, &event, 0);
+  });
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(true);
+  WiFi.setMinSecurity(minimumWifiAuth());
   WiFi.setAutoReconnect(true);
-  if (ssid.length())
+  if (ssid.length()) {
+    wifiDiagnostics.begin(millis());
     WiFi.begin(ssid.c_str(), password.c_str());
+    wifiLog("begin");
+  }
   MDNS.begin("magpie-screen");
   setupWeb();
   updatePalette();
@@ -1147,14 +1411,21 @@ void networkIO() {
           lastActivity = millis();
         if (i == 2 && !screenOff) {
           for (JsonObject e : data["route"]["events"].as<JsonArray>()) {
-            if (flights.size() >= 12)
+            if (flights.size() >= route_flights::capacity)
               break;
             String eventKey = e["key"] | "";
             // Event keys are pid:requestId:suffix; include both identity parts.
             int separator = eventKey.indexOf(':', eventKey.indexOf(':') + 1);
             String request = eventKey.substring(0, separator);
-            uint32_t start = route_flights::nextStart(flights, request, millis());
-            flights.push_back({eventKey, e["kind"] | "", e["target"] | "",
+            String kind=e["kind"] | "", target=e["target"] | "";
+            if(kind=="attempt" || kind=="response") {
+              bool visible=false;
+              for(JsonObject t:data["route"]["targets"].as<JsonArray>())
+                if(target==(t["key"]|"")) { visible=true; break; }
+              if(!visible) continue;
+            }
+            uint32_t start = route_flights::nextStart(flights, request, kind, target, millis());
+            flights.push_back({eventKey, kind, target,
                                request, e["failed"] | false, start});
           }
         }
@@ -1189,7 +1460,7 @@ void networkIO() {
         channelError[i] = "Wi-Fi disconnected";
       }
   }
-  if (networkBusy || otaActive || wifiPending || !online ||
+  if (networkBusy || otaActive || wifiPending || wifiScanPending || wifiScanning || !online ||
       config.url.isEmpty() || config.apiKey.isEmpty())
     return;
   uint32_t now = millis();
@@ -1246,7 +1517,13 @@ bool saveStandalone(JsonDocument &d, String &error) {
                 next.accountId != config.accountId ||
                 next.windowId != config.windowId;
   bool routing = next.background != config.background || next.showIdentity != config.showIdentity;
+  bool wifiChanged = next.wifiCompatibility != config.wifiCompatibility;
   config = next;
+  if (wifiChanged) {
+    wifiWeakSecurity = false;
+    wifiPending = ssid.length() > 0;
+    WiFi.setMinSecurity(minimumWifiAuth());
+  }
   motion.setAccelBias(config.accelBiasXG, config.accelBiasYG);
   motion.setLevelOffsets(config.levelOffset(0), config.levelOffset(1),
                          config.levelOffset(2), config.levelOffset(3));
@@ -1339,7 +1616,7 @@ void setupStandaloneWeb() {
       web.send(401, "application/json", "{\"error\":\"Unauthorized\"}");
       return;
     }
-    StaticJsonDocument<2048> d;
+    StaticJsonDocument<3072> d;
     status(d.to<JsonObject>());
     String body;
     serializeJson(d, body);
@@ -1376,6 +1653,30 @@ void setupStandaloneWeb() {
     String body;
     serializeJson(reply, body);
     web.send(ok ? 200 : 400, "application/json", body);
+  });
+  web.on("/api/wifi/scan", HTTP_POST, []() {
+    if (!authorized()) {
+      web.send(401, "application/json", "{\"error\":\"Unauthorized\"}");
+      return;
+    }
+    if (otaActive) {
+      web.send(409, "application/json", "{\"error\":\"更新固件期间无法扫描 Wi-Fi\"}");
+      return;
+    }
+    if (!wifiScanning && !wifiScanPending) {
+      wifiScanDiagnostic = false;
+      wifiScanPending = true;
+    }
+    web.send(202, "application/json", "{\"state\":\"scanning\"}");
+  });
+  web.on("/api/wifi/scan", HTTP_GET, []() {
+    if (!authorized()) {
+      web.send(401, "application/json", "{\"error\":\"Unauthorized\"}");
+      return;
+    }
+    web.sendHeader("Cache-Control", "no-store");
+    web.send(200, "application/json", wifiScanning || wifiScanPending
+        ? "{\"state\":\"scanning\",\"networks\":[]}" : wifiNetworksJSON);
   });
   web.on("/api/wifi", HTTP_POST, []() {
     if (!authorized()) {

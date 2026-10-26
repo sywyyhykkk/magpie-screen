@@ -40,8 +40,63 @@ int main() {
   DynamicJsonDocument input(4096), saved(4096), loaded(4096);
   deserializeJson(input, R"({"provider":"codex","usbBrightness":179})");
   assert(parseConfig(input.as<JsonObject>(), defaults, error));
+  assert(defaults.liquidTheme == "auto" && defaults.quotaIcon == "auto");
+  using appearance::Brand;
+  assert(appearance::resolve("auto", "remote-magpie/Claude") == Brand::Claude);
+  assert(appearance::resolve("auto", "remote-magpie/openai") == Brand::Codex);
+  assert(appearance::resolve("auto", "REMOTE/GEMINI-CLI") == Brand::Gemini);
+  assert(appearance::resolve("auto", "cursor") == Brand::Cursor);
+  assert(appearance::resolve("auto", "unknown-claude") == Brand::Unknown);
+  assert(appearance::resolve("claude", "remote-magpie/codex") == Brand::Claude);
+  assert(appearance::liquidTheme("auto", "unknown") == Brand::Codex);
+  assert(appearance::liquidTheme("gemini", "remote-magpie/claude") == Brand::Gemini);
+  for (const char *theme : {"auto", "codex", "claude", "gemini"}) {
+    for (const char *icon : {"auto", "codex", "claude", "gemini"}) {
+      input.clear(); input["liquidTheme"] = theme; input["quotaIcon"] = icon;
+      input["provider"] = "remote-magpie/claude";
+      input["accountId"] = "remote-account"; input["windowId"] = "daily";
+      DeviceConfig next;
+      assert(parseConfig(input.as<JsonObject>(), next, error));
+      saved.clear(); configJSON(saved.to<JsonObject>(), next, true);
+      std::string raw; serializeJson(saved, raw);
+      assert(!deserializeJson(loaded, raw));
+      DeviceConfig rebooted;
+      assert(parseConfig(loaded.as<JsonObject>(), rebooted, error));
+      assert(rebooted.liquidTheme == theme && rebooted.quotaIcon == icon);
+      assert(rebooted.provider == "remote-magpie/claude");
+      assert(rebooted.accountId == "remote-account" && rebooted.windowId == "daily");
+    }
+  }
+  for (const char *field : {"liquidTheme", "quotaIcon"}) {
+    for (const char *bad : {"null", "0", "true", "[]", "{}", "\"unknown\"", "\"\""}) {
+      assert(!deserializeJson(input, std::string("{\"") + field + "\":" + bad + "}"));
+      DeviceConfig next;
+      assert(!parseConfig(input.as<JsonObject>(), next, error));
+    }
+  }
   assert(defaults.levelOffsetDegrees == 0); // Older saved settings still load.
   assert(defaults.accelBiasXG == 0 && defaults.accelBiasYG == 0);
+  assert(!defaults.wifiCompatibility); // Existing NVS records default to WPA2.
+  for (bool enabled : {true, false}) {
+    input.clear(); input["wifiCompatibility"] = enabled;
+    DeviceConfig next;
+    assert(parseConfig(input.as<JsonObject>(), next, error));
+    assert(next.wifiCompatibility == enabled);
+    saved.clear(); configJSON(saved.to<JsonObject>(), next, true);
+    std::string raw; serializeJson(saved, raw);
+    assert(!deserializeJson(loaded, raw));
+    DeviceConfig rebooted;
+    assert(parseConfig(loaded.as<JsonObject>(), rebooted, error));
+    assert(rebooted.wifiCompatibility == enabled);
+    deserializeJson(input, R"({"background":true})");
+    assert(parseConfig(input.as<JsonObject>(), rebooted, error));
+    assert(rebooted.wifiCompatibility == enabled);
+  }
+  for (const char *bad : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    assert(!deserializeJson(input, std::string("{\"wifiCompatibility\":") + bad + "}"));
+    DeviceConfig next;
+    assert(!parseConfig(input.as<JsonObject>(), next, error));
+  }
   // Synthetic signed six-decimal inputs exercise serialization precision.
   constexpr float kSyntheticBiasXG = .012345f, kSyntheticBiasYG = -.023456f;
   input.clear();
@@ -135,4 +190,4 @@ with tempfile.TemporaryDirectory() as tmp:
                 '-o', str(path / 'test')]
     subprocess.run(command, check=True)
     subprocess.run([str(path / 'test')], check=True)
-print('PASS: level calibration defaults, signed decimals, persistence and invalid input')
+print('PASS: appearance, calibration and Wi-Fi compatibility defaults, persistence and invalid input')

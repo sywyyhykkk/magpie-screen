@@ -12,6 +12,7 @@ code = r'''
 #include <cassert>
 #include <cstring>
 #include <cstdint>
+#include "route_flights.h"
 class String: public std::string {
 public: using std::string::string;
 String(const std::string &s):std::string(s){}
@@ -133,12 +134,38 @@ int main(){
   assert(adapter.routes["1792755369000"].isNull());
   assert(!adapter.routes["1792755369099"].isNull());
   assert(out["route"]["targets"][0]["model"].as<std::string>()=="model-99");
+  // One poll with 16 completed requests must retain all 64 event legs, even
+  // when the requests share four destinations. The old 12-event cap lost most.
+  Adapter concurrent;DynamicJsonDocument concurrentOut(24576),batch(32768);
+  batch["pid"]=3;batch["seq"]=1;
+  batch.createNestedArray("ids");batch.createNestedArray("routes");
+  concurrent.trace(batch.as<JsonObjectConst>(),cfg,concurrentOut.to<JsonObject>());
+  batch["seq"]=2;
+  for(int i=0;i<16;i++) {
+    uint64_t id=1792755370000ULL+i;batch["ids"].add(id);
+    auto r=batch["routes"].createNestedObject();r["id"]=id;r["done"]=true;r["status"]=200;
+    auto t=r["tries"].createNestedObject();t["id"]=std::string("seat-")+std::to_string(i%4);
+    t["model"]=std::string("model-")+std::to_string(i%4);t["done"]=true;t["status"]=200;
+  }
+  assert(concurrent.trace(batch.as<JsonObjectConst>(),cfg,concurrentOut.as<JsonObject>()));
+  assert(!concurrentOut.overflowed());
+  assert(concurrentOut["route"]["targets"].size()==4);
+  assert(concurrentOut["route"]["events"].size()==64);
+  for(int i=0;i<16;i++) {
+    const auto prefix=std::string("3:")+std::to_string(1792755370000ULL+i)+":";
+    int legs=0;
+    for(JsonObject e:concurrentOut["route"]["events"].as<JsonArray>())
+      if(e["key"].as<std::string>().find(prefix)==0) legs++;
+    assert(legs==4);
+  }
+  concurrent.trace(batch.as<JsonObjectConst>(),cfg,concurrentOut.as<JsonObject>());
+  assert(concurrentOut["route"]["events"].size()==0); // No replay on repeat polls.
 }
 '''
 with tempfile.TemporaryDirectory() as tmp:
     path=Path(tmp);(path/'test.cpp').write_text(code)
     command=[os.environ.get('CXX','c++'),'-std=c++17','-fsanitize=address,undefined']
     if os.environ.get('SDKROOT'):command+=['-isysroot',os.environ['SDKROOT']]
-    command += [str(path/'test.cpp'),'-I'+str(root/'firmware/.pio/libdeps/liquid/ArduinoJson/src'),'-o',str(path/'test')]
+    command += [str(path/'test.cpp'),'-I'+str(root/'firmware/src'),'-I'+str(root/'firmware/.pio/libdeps/liquid/ArduinoJson/src'),'-o',str(path/'test')]
     subprocess.run(command,check=True);subprocess.run([str(path/'test')],check=True)
 print('PASS: 64-bit session discovery, baseline/new events, route sorting and bounded eviction')

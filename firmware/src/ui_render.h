@@ -1,5 +1,6 @@
 #pragma once
 #include "ui_assets.h"
+#include "provider_appearance.h"
 // Text and icons keep coverage until composited over the actual liquid pixel.
 static uint8_t *uiAlpha;
 static uint16_t blend565(uint16_t fg,uint16_t bg,int a);
@@ -118,8 +119,13 @@ static void icon(Arduino_Canvas &c,int x,int y,const UiIcon &im,bool white=false
   }
 }
 static const UiIcon &providerIcon(String name) {
-  name.toLowerCase();
-  return name=="claude"||name=="anthropic"?icon_claude32:name=="cursor"?icon_cursor32:name=="codex"||name=="openai"||name=="chatgpt"?icon_chatgpt32:icon_magpie32;
+  switch (appearance::brand(name.c_str())) {
+  case appearance::Brand::Claude: return icon_claude32;
+  case appearance::Brand::Codex: return icon_chatgpt32;
+  case appearance::Brand::Gemini: return icon_gemini32;
+  case appearance::Brand::Cursor: return icon_cursor32;
+  default: return icon_magpie32;
+  }
 }
 static uint16_t blend565(uint16_t fg,uint16_t bg,int a) {
   int b=255-a;
